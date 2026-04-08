@@ -492,7 +492,7 @@ dependencies = [
 
 [[package]]
 name = "crypto_aes"
-version = "0.1.0"
+version = "0.2.0-alpha"
 dependencies = [
  "aes-gcm",
  "base64",
@@ -1330,7 +1330,7 @@ dependencies = [
 
 [[package]]
 name = "messenger_core"
-version = "0.1.0"
+version = "0.2.0-alpha"
 dependencies = [
  "anyhow",
  "base64",
@@ -1947,7 +1947,7 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
 name = "storage_memory"
-version = "0.1.0"
+version = "0.2.0-alpha"
 dependencies = [
  "extism-pdk",
  "serde",
