@@ -1,0 +1,7 @@
+[workspace]
+resolver = "2"
+members = [
+    "core",
+    "plugins/storage_memory",
+    "plugins/crypto_aes",
+]

@@ -1,0 +1,22 @@
+[plugin]
+id = "crypto_aes"
+name = "AES-256-GCM Crypto"
+version = "0.1.0"
+category = "crypto"
+description = "Encrypts messages with AES-256-GCM using a built-in key"
+
+[capabilities]
+provides = ["encrypt", "decrypt"]
+subscribes_to = []
+emits = []
+
+[permissions]
+network = false
+filesystem = false
+contacts = false
+clipboard = false
+notifications = false
+
+[limits]
+max_memory_mb = 16
+timeout_ms = 1000
