@@ -1,54 +1,99 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../state/app_state.dart';
-import 'chat_screen.dart';
+import '../state/chat_state.dart';
+import '../state/plugins_state.dart';
+import 'setup_screen.dart';
+import 'contacts_screen.dart';
 import 'plugins_screen.dart';
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
   @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  int _tab = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final app = context.read<AppState>();
+      if (!app.initialized) {
+        _showSetupDialog();
+      }
+    });
+  }
+
+  void _showSetupDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const SetupScreen(),
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final state = context.watch<AppState>();
-    final portCtrl = TextEditingController(text: '7777');
-    final contactCtrl = TextEditingController(text: '127.0.0.1:8888');
+    final app = context.watch<AppState>();
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Void Messenger'),
+        title: const Text('Messenger'),
         actions: [
-          if (state.initialized)
-            IconButton(
-              icon: const Icon(Icons.extension),
-              onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PluginsScreen())),
-            )
+          if (app.initialized)
+            GestureDetector(
+              onTap: () {
+                Clipboard.setData(ClipboardData(text: app.myAddress));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Topic copied to clipboard'),
+                    duration: Duration(seconds: 1),
+                  ),
+                );
+              },
+              child: Padding(
+                padding: const EdgeInsets.only(right: 16),
+                child: Center(
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        app.myAddress,
+                        style:
+                            Theme.of(context).textTheme.labelSmall?.copyWith(
+                                  color: Colors.greenAccent,
+                                ),
+                      ),
+                      const SizedBox(width: 4),
+                      const Icon(Icons.copy, size: 12, color: Colors.greenAccent),
+                    ],
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            if (!state.initialized) ...[
-              TextField(controller: portCtrl, decoration: const InputDecoration(labelText: 'Listen Port')),
-              const SizedBox(height: 16),
-              ElevatedButton(
-                onPressed: () => state.initialize(int.parse(portCtrl.text)),
-                child: const Text('Start Core'),
-              ),
-              if (state.error != null) Text(state.error!, style: const TextStyle(color: Colors.red)),
-            ] else ...[
-              Text('Listening on: ${state.myAddress}', style: Theme.of(context).textTheme.titleLarge),
-              const SizedBox(height: 32),
-              TextField(controller: contactCtrl, decoration: const InputDecoration(labelText: 'Contact (IP:PORT)')),
-              const SizedBox(height: 16),
-              ElevatedButton(
-                onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ChatScreen(contact: contactCtrl.text))),
-                child: const Text('Open Chat'),
-              ),
-            ],
-          ],
-        ),
+      body: IndexedStack(
+        index: _tab,
+        children: const [
+          ContactsScreen(),
+          PluginsScreen(),
+        ],
+      ),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _tab,
+        onDestinationSelected: (i) => setState(() => _tab = i),
+        destinations: const [
+          NavigationDestination(
+              icon: Icon(Icons.chat_bubble_outline), label: 'Chats'),
+          NavigationDestination(
+              icon: Icon(Icons.extension_outlined), label: 'Plugins'),
+        ],
       ),
     );
   }

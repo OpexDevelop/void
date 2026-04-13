@@ -1,0 +1,22 @@
+[plugin]
+id = "transport_ntfy"
+name = "ntfy.sh Transport"
+version = "0.1.0"
+category = "transport"
+description = "Delivers messages via ntfy.sh pub/sub. Each address is a ntfy topic."
+
+[capabilities]
+provides = ["send", "get_pending"]
+subscribes_to = []
+emits = []
+
+[permissions]
+network = true
+filesystem = false
+contacts = false
+clipboard = false
+notifications = false
+
+[limits]
+max_memory_mb = 16
+timeout_ms = 10000

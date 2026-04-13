@@ -4,19 +4,54 @@ import 'package:ffi/ffi.dart';
 
 DynamicLibrary _loadLib() {
   if (Platform.isAndroid) return DynamicLibrary.open('libmessenger_core.so');
-  throw UnsupportedError('Unsupported platform');
+  if (Platform.isIOS) return DynamicLibrary.process();
+  if (Platform.isMacOS) return DynamicLibrary.open('libmessenger_core.dylib');
+  if (Platform.isLinux) return DynamicLibrary.open('libmessenger_core.so');
+  if (Platform.isWindows) return DynamicLibrary.open('messenger_core.dll');
+  throw UnsupportedError('Unsupported platform: ${Platform.operatingSystem}');
 }
 
 final _lib = _loadLib();
 
-final _init = _lib.lookupFunction<Void Function(Int32), void Function(int)>('messenger_init');
-final _loadPlugin = _lib.lookupFunction<Pointer<Utf8> Function(Pointer<Uint8>, Int32, Pointer<Utf8>), Pointer<Utf8> Function(Pointer<Uint8>, int, Pointer<Utf8>)>('messenger_load_plugin');
-final _listPlugins = _lib.lookupFunction<Pointer<Utf8> Function(), Pointer<Utf8> Function()>('messenger_list_plugins');
-final _unloadPlugin = _lib.lookupFunction<Void Function(Pointer<Utf8>), void Function(Pointer<Utf8>)>('messenger_unload_plugin');
-final _sendMessage = _lib.lookupFunction<Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>), Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>)>('messenger_send_message');
-final _getMessages = _lib.lookupFunction<Pointer<Utf8> Function(Pointer<Utf8>), Pointer<Utf8> Function(Pointer<Utf8>)>('messenger_get_messages');
-final _pollEvent = _lib.lookupFunction<Pointer<Utf8> Function(), Pointer<Utf8> Function()>('messenger_poll_event');
-final _freeString = _lib.lookupFunction<Void Function(Pointer<Utf8>), void Function(Pointer<Utf8>)>('messenger_free_string');
+final _init =
+    _lib.lookupFunction<Void Function(), void Function()>('messenger_init');
+
+final _loadPlugin = _lib.lookupFunction<
+    Pointer<Utf8> Function(Pointer<Uint8>, Int32, Pointer<Utf8>),
+    Pointer<Utf8> Function(
+        Pointer<Uint8>, int, Pointer<Utf8>)>('messenger_load_plugin');
+
+final _listPlugins =
+    _lib.lookupFunction<Pointer<Utf8> Function(), Pointer<Utf8> Function()>(
+        'messenger_list_plugins');
+
+final _unloadPlugin = _lib.lookupFunction<Void Function(Pointer<Utf8>),
+    void Function(Pointer<Utf8>)>('messenger_unload_plugin');
+
+final _sendMessage = _lib.lookupFunction<
+    Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>),
+    Pointer<Utf8> Function(
+        Pointer<Utf8>, Pointer<Utf8>)>('messenger_send_message');
+
+final _getMessages = _lib.lookupFunction<
+    Pointer<Utf8> Function(Pointer<Utf8>),
+    Pointer<Utf8> Function(Pointer<Utf8>)>('messenger_get_messages');
+
+final _pollEvent =
+    _lib.lookupFunction<Pointer<Utf8> Function(), Pointer<Utf8> Function()>(
+        'messenger_poll_event');
+
+final _pollTransport = _lib.lookupFunction<
+    Pointer<Utf8> Function(Pointer<Utf8>),
+    Pointer<Utf8> Function(Pointer<Utf8>)>('messenger_poll_transport');
+
+// Принимает просто строку-адрес — ядро само упакует и передаст плагину
+final _configureTransport = _lib.lookupFunction<
+    Pointer<Utf8> Function(Pointer<Utf8>),
+    Pointer<Utf8> Function(Pointer<Utf8>)>('messenger_configure_transport');
+
+final _freeString = _lib.lookupFunction<Void Function(Pointer<Utf8>),
+    void Function(Pointer<Utf8>)>('messenger_free_string');
 
 String? _readAndFree(Pointer<Utf8> ptr) {
   if (ptr.address == 0) return null;
@@ -25,7 +60,8 @@ String? _readAndFree(Pointer<Utf8> ptr) {
   return str;
 }
 
-void coreInit(int port) => _init(port);
+// Порт убран — транспорт не TCP
+void coreInit() => _init();
 
 String coreLoadPlugin(List<int> wasmBytes, String manifest) {
   final wasmPtr = malloc.allocate<Uint8>(wasmBytes.length);
@@ -64,3 +100,18 @@ String coreGetMessages(String contact) {
 }
 
 String? corePollEvent() => _readAndFree(_pollEvent());
+
+String corePollTransport(String sinceTimestamp) {
+  final ptr = sinceTimestamp.toNativeUtf8();
+  final result = _pollTransport(ptr);
+  malloc.free(ptr);
+  return _readAndFree(result) ?? '{"processed":0}';
+}
+
+// Передаём просто адрес — ядро решает как его упаковать для плагина
+String coreConfigureTransport(String myAddress) {
+  final ptr = myAddress.toNativeUtf8();
+  final result = _configureTransport(ptr);
+  malloc.free(ptr);
+  return _readAndFree(result) ?? '{"ok":false}';
+}

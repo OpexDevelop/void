@@ -2,21 +2,33 @@ import 'package:flutter/foundation.dart';
 import '../ffi/core_bridge.dart';
 
 class AppState extends ChangeNotifier {
-  int _listenPort = 7777;
+  String _myAddress = '';
   bool _initialized = false;
   String? _error;
 
-  int get listenPort => _listenPort;
+  String get myAddress => _myAddress;
   bool get initialized => _initialized;
   String? get error => _error;
-  String get myAddress => '127.0.0.1:$_listenPort';
 
-  Future<void> initialize(int port) async {
-    _listenPort = port;
+  Future<void> initialize({required String address}) async {
+    _myAddress = address;
     _error = null;
+
     try {
-      CoreBridge.instance.initialize(port);
+      CoreBridge.instance.initialize();
       await CoreBridge.instance.loadDefaultPlugins();
+
+      // Ядро говорит плагинам "вот наш адрес" — что с ним делать решает плагин
+      final ok = await CoreBridge.instance.configureTransport(
+        myAddress: address,
+      );
+
+      if (!ok) {
+        _error = 'Failed to configure transport plugin';
+        notifyListeners();
+        return;
+      }
+
       _initialized = true;
     } catch (e) {
       _error = e.toString();
