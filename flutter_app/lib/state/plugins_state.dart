@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:file_picker/file_picker.dart';
 import '../ffi/core_bridge.dart';
@@ -22,19 +21,75 @@ class PluginsState extends ChangeNotifier {
     _lastError = null;
     notifyListeners();
 
-    final wasmResult = await FilePicker.platform.pickFiles(type: FileType.any, withData: true, dialogTitle: 'Select .wasm plugin');
-    if (wasmResult == null || wasmResult.files.isEmpty) return;
-    
-    final tomlResult = await FilePicker.platform.pickFiles(type: FileType.any, withData: true, dialogTitle: 'Select manifest.toml');
-    if (tomlResult == null || tomlResult.files.isEmpty) return;
+    // Выбираем оба файла за один раз
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.any,
+      withData: true,
+      allowMultiple: true,
+      dialogTitle: 'Select .wasm and .toml files',
+    );
+
+    if (result == null || result.files.isEmpty) return;
+
+    // Находим wasm и toml среди выбранных
+    PlatformFile? wasmFile;
+    PlatformFile? tomlFile;
+
+    for (final file in result.files) {
+      final name = file.name.toLowerCase();
+      if (name.endsWith('.wasm')) {
+        wasmFile = file;
+      } else if (name.endsWith('.toml')) {
+        tomlFile = file;
+      }
+    }
+
+    // Если не выбрали оба — просим по одному
+    if (wasmFile == null) {
+      _lastError = 'No .wasm file selected';
+      notifyListeners();
+      return;
+    }
+
+    if (tomlFile == null) {
+      _lastError = 'No .toml manifest file selected';
+      notifyListeners();
+      return;
+    }
+
+    final wasmBytes = wasmFile.bytes;
+    final tomlBytes = tomlFile.bytes;
+
+    if (wasmBytes == null) {
+      _lastError = 'Failed to read .wasm file';
+      notifyListeners();
+      return;
+    }
+
+    if (tomlBytes == null) {
+      _lastError = 'Failed to read .toml file';
+      notifyListeners();
+      return;
+    }
 
     _loading = true;
     notifyListeners();
 
+    // Убираем BOM и нормализуем переносы строк
+    final manifestStr = String.fromCharCodes(tomlBytes)
+        .trimLeft()
+        .replaceAll('\r\n', '\n')
+        .replaceAll('\r', '\n');
+
     try {
-      final manifestStr = String.fromCharCodes(tomlResult.files.first.bytes!);
-      await CoreBridge.instance.loadPlugin(wasmResult.files.first.bytes!.toList(), manifestStr);
-      _plugins = CoreBridge.instance.listPlugins();
+      final info = await CoreBridge.instance.loadPlugin(
+        wasmBytes.toList(),
+        manifestStr,
+      );
+
+      if (info != null) {
+        _plugins = CoreBridge.instance.listPlugins();
+      }
     } catch (e) {
       _lastError = e.toString().replaceAll('Exception: ', '');
     } finally {
