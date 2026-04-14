@@ -26,8 +26,8 @@ jobs:
 
     - name: Install Android NDK and build-tools
       run: |
-        sdkmanager "build-tools;34.0.0" "platforms;android-34" "ndk;26.1.10909125"
-        echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/26.1.10909125" >> $GITHUB_ENV
+        sdkmanager "build-tools;35.0.0" "platforms;android-35" "ndk;27.0.12077973"
+        echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973" >> $GITHUB_ENV
 
     - name: Setup Rust
       uses: dtolnay/rust-toolchain@stable
@@ -76,6 +76,8 @@ jobs:
 
     - name: Build Rust Core (Android ARM64)
       working-directory: core
+      env:
+        ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
       run: |
         cargo ndk -t arm64-v8a \
           -o ../flutter_app/android/app/src/main/jniLibs \
@@ -112,8 +114,8 @@ jobs:
 
         android {
             namespace = "com.example.messenger_app"
-            compileSdk = 34
-            ndkVersion = "26.1.10909125"
+            compileSdk = 35
+            ndkVersion = "27.0.12077973"
 
             compileOptions {
                 sourceCompatibility = JavaVersion.VERSION_1_8
@@ -127,7 +129,7 @@ jobs:
             defaultConfig {
                 applicationId = "com.example.messenger_app"
                 minSdk = 24
-                targetSdk = 34
+                targetSdk = 35
                 versionCode = 1
                 versionName = "0.2.0-alpha"
             }
@@ -159,16 +161,14 @@ jobs:
         android.enableJetifier=true
         EOF
 
-    - name: Disable shrink in build.gradle.kts if exists
+    - name: Remove conflicting build.gradle.kts
       working-directory: flutter_app
       run: |
-        if [ -f android/build.gradle.kts ]; then
-          sed -i 's/shrinkResources = true/shrinkResources = false/g' android/build.gradle.kts
-          sed -i 's/shrinkResources true/shrinkResources false/g' android/build.gradle.kts
+        if [ -f android/app/build.gradle ] && [ -f android/app/build.gradle.kts ]; then
+          rm android/app/build.gradle.kts
         fi
-        if [ -f android/app/build.gradle.kts ]; then
-          sed -i 's/shrinkResources = true/shrinkResources = false/g' android/app/build.gradle.kts
-          sed -i 's/shrinkResources true/shrinkResources false/g' android/app/build.gradle.kts
+        if [ -f android/build.gradle ] && [ -f android/build.gradle.kts ]; then
+          rm android/build.gradle.kts
         fi
 
     - name: Flutter pub get
