@@ -25,13 +25,15 @@ impl Default for NtfyConfig {
     }
 }
 
+
 fn load_config() -> NtfyConfig {
     var::get(CONFIG_KEY)
         .ok()
         .flatten()
-        .and_then(|b| serde_json::from_slice(&b).ok())
+        .and_then(|b: Vec<u8>| serde_json::from_slice(&b).ok())
         .unwrap_or_default()
 }
+
 
 fn save_config(cfg: &NtfyConfig) -> FnResult<()> {
     var::set(CONFIG_KEY, serde_json::to_vec(cfg)?)?;
