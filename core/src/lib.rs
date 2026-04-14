@@ -8,21 +8,10 @@ use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use base64::Engine;
 
-// ──────────────────────────────────────────────────────────────
-// FFI инициализация
-// ──────────────────────────────────────────────────────────────
-
 #[no_mangle]
-pub extern "C" fn messenger_init(port: i32) {
+pub extern "C" fn messenger_init() {
     std::env::set_var("HOME", std::env::temp_dir());
-    core::init(port as u16);
-    // TCP сервер больше не запускается здесь
-    // Транспорт — это плагин, ядро не знает о нём
 }
-
-// ──────────────────────────────────────────────────────────────
-// Plugin management FFI
-// ──────────────────────────────────────────────────────────────
 
 #[no_mangle]
 pub extern "C" fn messenger_load_plugin(
@@ -55,11 +44,6 @@ pub extern "C" fn messenger_unload_plugin(id_ptr: *const c_char) {
     plugin_manager::unload_plugin(id);
 }
 
-// ──────────────────────────────────────────────────────────────
-// Messaging FFI
-// Ядро диспетчеризует через плагины, не содержит логики
-// ──────────────────────────────────────────────────────────────
-
 #[no_mangle]
 pub extern "C" fn messenger_send_message(
     to_ptr: *const c_char,
@@ -79,8 +63,7 @@ pub extern "C" fn messenger_get_messages(contact_ptr: *const c_char) -> *mut c_c
     let result = if let Some(storage_id) =
         plugin_manager::find_plugin_by_category("storage")
     {
-        let input =
-            serde_json::json!({ "contact": contact }).to_string();
+        let input = serde_json::json!({ "contact": contact }).to_string();
         plugin_manager::call_plugin_fn(&storage_id, "get_messages", &input)
             .unwrap_or_else(|_| "[]".to_string())
     } else {
@@ -90,8 +73,6 @@ pub extern "C" fn messenger_get_messages(contact_ptr: *const c_char) -> *mut c_c
     CString::new(result).unwrap().into_raw()
 }
 
-/// Flutter вызывает это периодически чтобы забрать входящие
-/// через транспортный плагин и положить в storage + event bus
 #[no_mangle]
 pub extern "C" fn messenger_poll_transport(since_ptr: *const c_char) -> *mut c_char {
     let since_ts: u64 = if since_ptr.is_null() {
@@ -111,11 +92,6 @@ pub extern "C" fn messenger_poll_transport(since_ptr: *const c_char) -> *mut c_c
 pub extern "C" fn messenger_configure_transport(address_ptr: *const c_char) -> *mut c_char {
     let my_address = unsafe { CStr::from_ptr(address_ptr).to_str().unwrap_or("") };
 
-    // Ядро упаковывает адрес в универсальный конверт
-    // Плагин сам интерпретирует поле "address" как нужно:
-    // ntfy плагин — как topic
-    // tcp плагин — как host:port
-    // любой другой — как угодно
     let config = serde_json::json!({ "address": my_address }).to_string();
 
     let result = if let Some(transport_id) =
@@ -126,12 +102,15 @@ pub extern "C" fn messenger_configure_transport(address_ptr: *const c_char) -> *
             Err(e) => serde_json::json!({ "ok": false, "error": e }).to_string(),
         }
     } else {
-        serde_json::json!({ "ok": false, "error": "no transport plugin loaded" }).to_string()
+        serde_json::json!({
+            "ok": false,
+            "error": "no transport plugin loaded"
+        })
+        .to_string()
     };
 
     CString::new(result).unwrap().into_raw()
 }
-
 
 #[no_mangle]
 pub extern "C" fn messenger_poll_event() -> *mut c_char {
@@ -151,20 +130,9 @@ pub extern "C" fn messenger_free_string(ptr: *mut c_char) {
     }
 }
 
-// ──────────────────────────────────────────────────────────────
-// Внутренняя диспетчеризация — ядро оркестрирует плагины
-// но не содержит бизнес-логику шифрования/транспорта
-// ──────────────────────────────────────────────────────────────
-
-/// Отправить сообщение:
-/// 1. Зашифровать через crypto плагин (если загружен)
-/// 2. Сохранить исходящее через storage плагин (если загружен)
-/// 3. Отправить через transport плагин
 fn dispatch_send(to: &str, text: &str) -> serde_json::Value {
-    // Шаг 1: шифрование через crypto плагин
     let payload_b64 = encrypt_via_plugin(text);
 
-    // Шаг 2: сохранить исходящее в storage
     if let Some(storage_id) = plugin_manager::find_plugin_by_category("storage") {
         let input = serde_json::json!({
             "from": "me",
@@ -176,7 +144,6 @@ fn dispatch_send(to: &str, text: &str) -> serde_json::Value {
         let _ = plugin_manager::call_plugin_fn(&storage_id, "store_message", &input);
     }
 
-    // Шаг 3: отправить через transport плагин
     if let Some(transport_id) = plugin_manager::find_plugin_by_category("transport") {
         let input = serde_json::json!({
             "to_topic": to,
@@ -186,7 +153,6 @@ fn dispatch_send(to: &str, text: &str) -> serde_json::Value {
 
         match plugin_manager::call_plugin_fn(&transport_id, "send", &input) {
             Ok(resp) => {
-                // Парсим ответ транспортного плагина
                 if let Ok(v) = serde_json::from_str::<serde_json::Value>(&resp) {
                     return v;
                 }
@@ -202,8 +168,6 @@ fn dispatch_send(to: &str, text: &str) -> serde_json::Value {
     }
 }
 
-/// Опросить транспортный плагин за входящими, обработать их
-/// Возвращает количество обработанных сообщений
 fn dispatch_poll_incoming(since_ts: u64) -> u32 {
     let transport_id = match plugin_manager::find_plugin_by_category("transport") {
         Some(id) => id,
@@ -238,10 +202,8 @@ fn dispatch_poll_incoming(since_ts: u64) -> u32 {
         let payload_b64 = msg["payload_b64"].as_str().unwrap_or("").to_string();
         let timestamp = msg["timestamp"].as_u64().unwrap_or_else(current_timestamp);
 
-        // Расшифровать через crypto плагин
         let text = decrypt_via_plugin(&payload_b64);
 
-        // Сохранить входящее в storage
         if let Some(storage_id) = plugin_manager::find_plugin_by_category("storage") {
             let store_input = serde_json::json!({
                 "from": from_topic,
@@ -254,7 +216,6 @@ fn dispatch_poll_incoming(since_ts: u64) -> u32 {
                 plugin_manager::call_plugin_fn(&storage_id, "store_message", &store_input);
         }
 
-        // Пустить событие в bus
         bus::push_event(bus::Event {
             kind: "message_received".to_string(),
             payload: serde_json::json!({
@@ -270,11 +231,6 @@ fn dispatch_poll_incoming(since_ts: u64) -> u32 {
     count
 }
 
-// ──────────────────────────────────────────────────────────────
-// Вспомогательные функции через плагины
-// (не публичные — ядро использует их внутри dispatch_*)
-// ──────────────────────────────────────────────────────────────
-
 fn encrypt_via_plugin(text: &str) -> String {
     if let Some(id) = plugin_manager::find_plugin_by_category("crypto") {
         let input = serde_json::json!({ "plaintext": text }).to_string();
@@ -286,7 +242,6 @@ fn encrypt_via_plugin(text: &str) -> String {
             }
         }
     }
-    // Нет crypto плагина — передаём plaintext в base64
     base64::engine::general_purpose::STANDARD.encode(text.as_bytes())
 }
 
@@ -301,7 +256,6 @@ fn decrypt_via_plugin(payload_b64: &str) -> String {
             }
         }
     }
-    // Нет crypto плагина — декодируем base64 как plaintext
     base64::engine::general_purpose::STANDARD
         .decode(payload_b64)
         .ok()

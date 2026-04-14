@@ -45,7 +45,6 @@ final _pollTransport = _lib.lookupFunction<
     Pointer<Utf8> Function(Pointer<Utf8>),
     Pointer<Utf8> Function(Pointer<Utf8>)>('messenger_poll_transport');
 
-// Принимает просто строку-адрес — ядро само упакует и передаст плагину
 final _configureTransport = _lib.lookupFunction<
     Pointer<Utf8> Function(Pointer<Utf8>),
     Pointer<Utf8> Function(Pointer<Utf8>)>('messenger_configure_transport');
@@ -60,7 +59,6 @@ String? _readAndFree(Pointer<Utf8> ptr) {
   return str;
 }
 
-// Порт убран — транспорт не TCP
 void coreInit() => _init();
 
 String coreLoadPlugin(List<int> wasmBytes, String manifest) {
@@ -108,7 +106,6 @@ String corePollTransport(String sinceTimestamp) {
   return _readAndFree(result) ?? '{"processed":0}';
 }
 
-// Передаём просто адрес — ядро решает как его упаковать для плагина
 String coreConfigureTransport(String myAddress) {
   final ptr = myAddress.toNativeUtf8();
   final result = _configureTransport(ptr);

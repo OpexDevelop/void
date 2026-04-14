@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+limport 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../state/app_state.dart';
 import '../state/chat_state.dart';
@@ -61,18 +61,45 @@ class _SetupScreenState extends State<SetupScreen> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Enter your address.\nShare it with others to receive messages.'),
+          const Text(
+            'Enter your address.\n'
+            'Share it with others to receive messages.',
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'Example: opex777',
+            style: TextStyle(color: Colors.grey, fontSize: 12),
+          ),
           const SizedBox(height: 16),
           TextField(
             controller: _addressController,
             decoration: InputDecoration(
               labelText: 'Your address',
+              hintText: 'opex777',
               border: const OutlineInputBorder(),
               errorText: _error,
             ),
             autocorrect: false,
             enableSuggestions: false,
+            onSubmitted: (_) => _loading ? null : _start(),
           ),
+          if (_loading) ...[
+            const SizedBox(height: 16),
+            const Row(
+              children: [
+                SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                SizedBox(width: 12),
+                Text(
+                  'Loading plugins...',
+                  style: TextStyle(color: Colors.grey),
+                ),
+              ],
+            ),
+          ],
         ],
       ),
       actions: [
