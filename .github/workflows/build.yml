@@ -80,10 +80,8 @@ jobs:
 
     - name: Generate FRB bindings
       run: |
-        flutter_rust_bridge_codegen generate \
-          --rust-input core/src/api.rs \
-          --dart-output flutter_app/lib/src/rust/ \
-          --c-output flutter_app/ios/Runner/bridge_generated.h
+        cd core
+        flutter_rust_bridge_codegen generate
 
     - name: Build WASM plugins
       run: |
