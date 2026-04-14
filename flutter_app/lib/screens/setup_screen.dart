@@ -12,126 +12,84 @@ class SetupScreen extends StatefulWidget {
 }
 
 class _SetupScreenState extends State<SetupScreen> {
-  final _addressController = TextEditingController();
-  bool _loading = false;
-  String? _error;
-  final List<String> _log = [];
-
-  void _addLog(String msg) {
-    if (mounted) setState(() => _log.add(msg));
-  }
+  final _ctrl = TextEditingController();
+  bool _running = false;
 
   @override
   void dispose() {
-    _addressController.dispose();
+    _ctrl.dispose();
     super.dispose();
   }
 
   Future<void> _start() async {
-    final address = _addressController.text.trim();
-    if (address.isEmpty) {
-      setState(() => _error = 'Enter your address');
-      return;
-    }
+    final addr = _ctrl.text.trim();
+    if (addr.isEmpty) return;
 
-    setState(() {
-      _loading = true;
-      _error = null;
-      _log.clear();
-    });
+    setState(() => _running = true);
 
-    try {
-      _addLog('1. coreInit()...');
-      final app = context.read<AppState>();
-      await app.initializeWithLog(address: address, onLog: _addLog);
+    final app = context.read<AppState>();
+    await app.initialize(addr);
 
-      if (!mounted) return;
+    if (!mounted) return;
 
-      if (app.error != null) {
-        setState(() {
-          _error = app.error;
-          _loading = false;
-        });
-        return;
-      }
+    context.read<ChatState>().init();
+    context.read<PluginsState>().refresh();
 
-      _addLog('OK — opening app...');
-      await Future.delayed(const Duration(milliseconds: 300));
-
-      if (!mounted) return;
-      context.read<ChatState>().init();
-      context.read<PluginsState>().refresh();
-      Navigator.of(context).pop();
-    } catch (e, st) {
-      setState(() {
-        _error = '$e\n\n$st';
-        _loading = false;
-      });
-    }
+    Navigator.of(context).pop();
   }
 
   @override
   Widget build(BuildContext context) {
+    final app = context.watch<AppState>();
+
     return AlertDialog(
       title: const Text('Start Messenger'),
-      content: SingleChildScrollView(
+      content: SizedBox(
+        width: double.maxFinite,
         child: Column(
           mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             TextField(
-              controller: _addressController,
+              controller: _ctrl,
+              enabled: !_running,
               decoration: const InputDecoration(
                 labelText: 'Your address',
                 hintText: 'opex777',
                 border: OutlineInputBorder(),
               ),
               autocorrect: false,
-              enableSuggestions: false,
-              onSubmitted: (_) => _loading ? null : _start(),
+              onSubmitted: (_) => _running ? null : _start(),
             ),
-            if (_log.isNotEmpty) ...[
-              const SizedBox(height: 12),
+            if (_running) ...[
+              const SizedBox(height: 16),
+              // Лог — показывает каждый шаг
               Container(
                 width: double.maxFinite,
-                constraints: const BoxConstraints(maxHeight: 250),
+                constraints: const BoxConstraints(maxHeight: 220),
                 decoration: BoxDecoration(
-                  color: Colors.black87,
+                  color: Colors.black,
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: SingleChildScrollView(
+                child: ListView.builder(
                   padding: const EdgeInsets.all(8),
-                  child: SelectableText(
-                    _log.join('\n'),
-                    style: const TextStyle(
-                      fontSize: 11,
-                      fontFamily: 'monospace',
-                      color: Colors.greenAccent,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-            if (_error != null) ...[
-              const SizedBox(height: 12),
-              Container(
-                width: double.maxFinite,
-                constraints: const BoxConstraints(maxHeight: 200),
-                decoration: BoxDecoration(
-                  color: Colors.red.shade900.withOpacity(0.4),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.red),
-                ),
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.all(8),
-                  child: SelectableText(
-                    _error!,
-                    style: const TextStyle(
-                      fontSize: 11,
-                      fontFamily: 'monospace',
-                      color: Colors.redAccent,
-                    ),
-                  ),
+                  shrinkWrap: true,
+                  itemCount: app.log.length,
+                  itemBuilder: (_, i) {
+                    final line = app.log[i];
+                    final color = line.startsWith('⚠')
+                        ? Colors.orange
+                        : line.startsWith('Ready')
+                            ? Colors.greenAccent
+                            : Colors.white70;
+                    return Text(
+                      line,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontFamily: 'monospace',
+                        color: color,
+                      ),
+                    );
+                  },
                 ),
               ),
             ],
@@ -139,21 +97,12 @@ class _SetupScreenState extends State<SetupScreen> {
         ),
       ),
       actions: [
-        if (_error != null)
-          TextButton(
-            onPressed: () => setState(() {
-              _error = null;
-              _log.clear();
-              _loading = false;
-            }),
-            child: const Text('Retry'),
-          ),
         FilledButton(
-          onPressed: _loading ? null : _start,
-          child: _loading
+          onPressed: _running ? null : _start,
+          child: _running
               ? const SizedBox(
-                  width: 18,
-                  height: 18,
+                  width: 16,
+                  height: 16,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
               : const Text('Start'),

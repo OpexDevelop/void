@@ -2,89 +2,46 @@ import 'package:flutter/foundation.dart';
 import '../ffi/core_bridge.dart';
 
 class AppState extends ChangeNotifier {
-  String _myAddress = '';
-  bool _initialized = false;
-  bool _loading = false;
-  String? _error;
+  String myAddress = '';
+  bool initialized = false;
 
-  String get myAddress => _myAddress;
-  bool get initialized => _initialized;
-  bool get loading => _loading;
-  String? get error => _error;
+  // Лог для отображения на экране при старте
+  final List<String> log = [];
 
-  Future<void> initialize({required String address}) async {
-    await initializeWithLog(address: address, onLog: (_) {});
+  void _log(String msg) {
+    debugPrint('[AppState] $msg');
+    log.add(msg);
+    notifyListeners();
   }
 
-  Future<void> initializeWithLog({
-    required String address,
-    required void Function(String) onLog,
-  }) async {
-    _myAddress = address;
-    _error = null;
-    _loading = true;
+  Future<void> initialize(String address) async {
+    myAddress = address;
+    initialized = false;
+    log.clear();
     notifyListeners();
 
     await Future.delayed(const Duration(milliseconds: 30));
 
-    try {
-      onLog('coreInit...');
-      CoreBridge.instance.initialize();
-      onLog('coreInit OK');
+    _log('Starting core...');
+    CoreBridge.instance.start();
 
-      await Future.delayed(const Duration(milliseconds: 20));
+    _log('Loading plugins...');
+    final errors = await CoreBridge.instance.loadDefaultPlugins();
 
-      final plugins = [
-        (
-          'storage_memory',
-          'assets/plugins/storage_memory.wasm',
-          'assets/plugins/storage_memory.manifest.toml',
-        ),
-        (
-          'crypto_aes',
-          'assets/plugins/crypto_aes.wasm',
-          'assets/plugins/crypto_aes.manifest.toml',
-        ),
-        (
-          'transport_ntfy',
-          'assets/plugins/transport_ntfy.wasm',
-          'assets/plugins/transport_ntfy.manifest.toml',
-        ),
-      ];
-
-      for (final (name, wasmPath, manifestPath) in plugins) {
-        onLog('loading $name...');
-        try {
-          await CoreBridge.instance.loadOnePlugin(
-            name: name,
-            wasmPath: wasmPath,
-            manifestPath: manifestPath,
-          );
-          onLog('$name OK');
-        } catch (e) {
-          onLog('$name FAILED: $e');
-          // Не останавливаемся — пробуем остальные
-        }
-      }
-
-      onLog('configure transport: $address...');
-      try {
-        final result = await CoreBridge.instance.configureTransport(
-          myAddress: address,
-        );
-        onLog('transport: $result');
-      } catch (e) {
-        onLog('transport configure failed: $e (offline mode)');
-      }
-
-      _initialized = true;
-      onLog('initialized!');
-    } catch (e, st) {
-      _error = '$e\n$st';
-      onLog('FATAL: $e');
+    for (final e in errors.entries) {
+      _log('⚠ ${e.key}: ${e.value}');
     }
 
-    _loading = false;
+    _log('Configuring transport ($address)...');
+    final transportErr = CoreBridge.instance.configureTransport(address);
+    if (transportErr != null) {
+      _log('⚠ Transport: $transportErr (offline mode)');
+    } else {
+      _log('Transport OK');
+    }
+
+    initialized = true;
+    _log('Ready!');
     notifyListeners();
   }
 }

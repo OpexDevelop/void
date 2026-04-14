@@ -4,97 +4,57 @@ import '../ffi/core_bridge.dart';
 import '../models/plugin_info.dart';
 
 class PluginsState extends ChangeNotifier {
-  List<PluginInfo> _plugins = [];
-  bool _loading = false;
-  String? _lastError;
-
-  List<PluginInfo> get plugins => List.unmodifiable(_plugins);
-  bool get loading => _loading;
-  String? get lastError => _lastError;
+  List<PluginInfo> plugins = [];
+  bool loading = false;
+  String? error;
 
   void refresh() {
-    try {
-      _plugins = CoreBridge.instance.listPlugins();
-    } catch (e) {
-      debugPrint('[PluginsState] refresh error: $e');
-      _plugins = [];
-    }
+    plugins = CoreBridge.instance.listPlugins();
     notifyListeners();
   }
 
   Future<void> pickAndInstall() async {
-    _lastError = null;
+    error = null;
     notifyListeners();
 
     final result = await FilePicker.platform.pickFiles(
-      type: FileType.any,
       withData: true,
       allowMultiple: true,
-      dialogTitle: 'Select .wasm and .toml files',
+      dialogTitle: 'Select .wasm and .toml',
     );
-
-    if (result == null || result.files.isEmpty) return;
+    if (result == null) return;
 
     PlatformFile? wasmFile;
     PlatformFile? tomlFile;
-
-    for (final file in result.files) {
-      final name = file.name.toLowerCase();
-      if (name.endsWith('.wasm')) {
-        wasmFile = file;
-      } else if (name.endsWith('.toml')) {
-        tomlFile = file;
-      }
+    for (final f in result.files) {
+      if (f.name.endsWith('.wasm')) wasmFile = f;
+      if (f.name.endsWith('.toml')) tomlFile = f;
     }
 
-    if (wasmFile == null) {
-      _lastError = 'No .wasm file selected';
-      notifyListeners();
-      return;
-    }
+    if (wasmFile?.bytes == null) { error = 'No .wasm selected'; notifyListeners(); return; }
+    if (tomlFile?.bytes == null) { error = 'No .toml selected'; notifyListeners(); return; }
 
-    if (tomlFile == null) {
-      _lastError = 'No .toml manifest file selected';
-      notifyListeners();
-      return;
-    }
-
-    final wasmBytes = wasmFile.bytes;
-    final tomlBytes = tomlFile.bytes;
-
-    if (wasmBytes == null || tomlBytes == null) {
-      _lastError = 'Failed to read files';
-      notifyListeners();
-      return;
-    }
-
-    _loading = true;
+    loading = true;
     notifyListeners();
 
-    final manifestStr = String.fromCharCodes(tomlBytes)
-        .trimLeft()
-        .replaceAll('\r\n', '\n')
-        .replaceAll('\r', '\n');
-
     try {
-      await CoreBridge.instance.loadPlugin(
-        wasmBytes.toList(),
-        manifestStr,
-      );
-      _plugins = CoreBridge.instance.listPlugins();
-    } on PluginAlreadyLoadedException catch (e) {
-      _lastError = 'Plugin already loaded: $e';
+      final manifest = String.fromCharCodes(tomlFile!.bytes!)
+          .trimLeft()
+          .replaceAll('\r\n', '\n')
+          .replaceAll('\r', '\n');
+      await CoreBridge.instance.installPlugin(wasmFile!.bytes!.toList(), manifest);
+      plugins = CoreBridge.instance.listPlugins();
     } catch (e) {
-      _lastError = e.toString().replaceAll('Exception: ', '');
-    } finally {
-      _loading = false;
-      notifyListeners();
+      error = e.toString().replaceAll('Exception: ', '');
     }
+
+    loading = false;
+    notifyListeners();
   }
 
   void unload(String id) {
-    CoreBridge.instance.unloadPlugin(id);
-    _plugins = CoreBridge.instance.listPlugins();
+    CoreBridge.instance.removePlugin(id);
+    plugins = CoreBridge.instance.listPlugins();
     notifyListeners();
   }
 }
