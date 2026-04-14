@@ -26,26 +26,13 @@ pub fn load_plugin(wasm_bytes: Vec<u8>, manifest_toml: &str) -> Result<PluginInf
     let wasm = Wasm::data(wasm_bytes);
     let mut ext_manifest = Manifest::new([wasm]);
 
-    // Применяем лимит памяти из манифеста
-    let memory_limit_pages = {
-        // Extism считает память в страницах по 64KiB
-        // max_memory_mb * 1024 * 1024 / 65536 = max_memory_mb * 16
-        let pages = manifest_data.limits.max_memory_mb as u64 * 16;
-        pages.max(1) // минимум 1 страница
-    };
+    // u32 напрямую — никакого u64
+    let memory_limit_pages: u32 = (manifest_data.limits.max_memory_mb * 16).max(1);
     ext_manifest = ext_manifest.with_memory_max(memory_limit_pages);
 
-    // Применяем сетевые разрешения из манифеста
     if manifest_data.permissions.network {
-        // Разрешаем любые хосты если network = true
         ext_manifest = ext_manifest.with_allowed_host("*");
     }
-    // Если network = false — не добавляем ни одного allowed_host,
-    // Extism по умолчанию блокирует все сетевые вызовы
-
-    // Таймаут на вызовы плагина (Extism v1 поддерживает через WithTimeout)
-    // Примечание: timeout применяется в call_plugin_fn через Plugin::set_timeout
-    // Сохраняем в LoadedPlugin для последующего применения
 
     let plugin = Plugin::new(&ext_manifest, [], true).map_err(|e| e.to_string())?;
 
@@ -80,14 +67,7 @@ pub fn call_plugin_fn(plugin_id: &str, func: &str, input: &str) -> Result<String
         .get(plugin_id)
         .ok_or_else(|| format!("plugin '{}' not found", plugin_id))?;
 
-    // Применяем таймаут из манифеста
-    let timeout_ms = loaded.manifest_data.limits.timeout_ms;
     let mut plugin = loaded.plugin.lock().unwrap();
-
-    if timeout_ms > 0 {
-        plugin.set_timeout_ms(timeout_ms as u64);
-    }
-
     let result: String = plugin.call(func, input).map_err(|e| e.to_string())?;
     Ok(result)
 }
