@@ -34,13 +34,12 @@ jobs:
       with:
         targets: aarch64-linux-android,wasm32-wasip1
 
-    # cargo-ndk кэшируем отдельно — он меняется редко
     - name: Cache cargo-ndk binary
       id: cache-cargo-ndk
       uses: actions/cache@v4
       with:
         path: ~/.cargo/bin/cargo-ndk
-        key: ${{ runner.os }}-cargo-ndk-3
+        key: ${{ runner.os }}-cargo-ndk-v3
 
     - name: Install cargo-ndk
       if: steps.cache-cargo-ndk.outputs.cache-hit != 'true'
@@ -53,7 +52,6 @@ jobs:
         channel: 'stable'
         cache: true
 
-    # Cargo registry — зависит от Cargo.lock
     - name: Cache Cargo registry
       uses: actions/cache@v4
       with:
@@ -65,28 +63,25 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-cargo-registry-
 
-    # Скомпилированные артефакты — зависят от исходников
     - name: Cache Cargo target
       uses: actions/cache@v4
       with:
         path: target/
-        key: ${{ runner.os }}-cargo-target-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('core/src/**/*.rs', 'plugins/**/*.rs') }}
+        key: ${{ runner.os }}-cargo-target-${{ hashFiles('**/Cargo.lock') }}
         restore-keys: |
-          ${{ runner.os }}-cargo-target-${{ hashFiles('**/Cargo.lock') }}-
           ${{ runner.os }}-cargo-target-
 
-    # Gradle wrapper и кэш зависимостей
     - name: Cache Gradle wrapper
       uses: actions/cache@v4
       with:
         path: ~/.gradle/wrapper
         key: ${{ runner.os }}-gradle-wrapper-${{ hashFiles('**/gradle-wrapper.properties') }}
 
-    - name: Cache Gradle dependencies
+    - name: Cache Gradle caches
       uses: actions/cache@v4
       with:
         path: ~/.gradle/caches
-        key: ${{ runner.os }}-gradle-caches-${{ hashFiles('**/*.gradle*', '**/*.gradle.kts*') }}
+        key: ${{ runner.os }}-gradle-caches-${{ hashFiles('**/*.gradle*') }}
         restore-keys: |
           ${{ runner.os }}-gradle-caches-
 
