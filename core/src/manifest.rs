@@ -4,6 +4,7 @@ use crate::models::{PluginInfo, PluginPermissions};
 #[derive(Deserialize)]
 pub struct PluginManifest {
     pub plugin: PluginSection,
+    #[allow(dead_code)]
     pub capabilities: CapabilitiesSection,
     pub permissions: PermissionsSection,
     pub limits: LimitsSection,
@@ -19,6 +20,7 @@ pub struct PluginSection {
 }
 
 #[derive(Deserialize)]
+#[allow(dead_code)]
 pub struct CapabilitiesSection {
     pub provides: Vec<String>,
     pub subscribes_to: Vec<String>,
@@ -37,6 +39,7 @@ pub struct PermissionsSection {
 #[derive(Deserialize)]
 pub struct LimitsSection {
     pub max_memory_mb: u32,
+    #[allow(dead_code)]
     pub timeout_ms: u32,
 }
 

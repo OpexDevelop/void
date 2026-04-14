@@ -16,7 +16,7 @@ fn load_store() -> HashMap<String, Vec<StoredMessage>> {
     var::get(STORAGE_KEY)
         .ok()
         .flatten()
-        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .and_then(|bytes: Vec<u8>| serde_json::from_slice(&bytes).ok())
         .unwrap_or_default()
 }
 
@@ -50,7 +50,6 @@ pub fn store_message(input: String) -> FnResult<String> {
     };
 
     let mut store = load_store();
-
     store.entry(key).or_default().push(StoredMessage {
         from: msg.from,
         to: msg.to,
