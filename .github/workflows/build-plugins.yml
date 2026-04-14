@@ -1,0 +1,50 @@
+name: Build Plugins Only
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'void/plugins/**'
+      - 'void/Cargo.toml'
+
+jobs:
+  build-plugins:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: wasm32-wasip1
+
+    - name: Cache Cargo
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          void/target/
+        key: ${{ runner.os }}-cargo-wasm-${{ hashFiles('void/**/Cargo.lock') }}
+
+    - name: Build WASM Plugins
+      working-directory: void
+      run: |
+        cargo build --release -p storage_memory --target wasm32-wasip1
+        cargo build --release -p crypto_aes --target wasm32-wasip1
+        cargo build --release -p transport_ntfy --target wasm32-wasip1
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: wasm-plugins-${{ github.sha }}
+        path: |
+          void/target/wasm32-wasip1/release/storage_memory.wasm
+          void/target/wasm32-wasip1/release/crypto_aes.wasm
+          void/target/wasm32-wasip1/release/transport_ntfy.wasm
+          void/plugins/*/manifest.toml
+        retention-days: 30
