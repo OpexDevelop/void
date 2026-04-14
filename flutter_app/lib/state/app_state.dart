@@ -6,55 +6,82 @@ class AppState extends ChangeNotifier {
   bool _initialized = false;
   bool _loading = false;
   String? _error;
-  List<String> _warnings = [];
 
   String get myAddress => _myAddress;
   bool get initialized => _initialized;
   bool get loading => _loading;
   String? get error => _error;
-  List<String> get warnings => List.unmodifiable(_warnings);
 
   Future<void> initialize({required String address}) async {
+    await initializeWithLog(address: address, onLog: (_) {});
+  }
+
+  Future<void> initializeWithLog({
+    required String address,
+    required void Function(String) onLog,
+  }) async {
     _myAddress = address;
     _error = null;
-    _warnings = [];
     _loading = true;
     notifyListeners();
 
-    // Маленькая задержка чтобы UI успел перерисоваться
-    await Future.delayed(const Duration(milliseconds: 50));
+    await Future.delayed(const Duration(milliseconds: 30));
 
     try {
+      onLog('coreInit...');
       CoreBridge.instance.initialize();
-      await Future.delayed(const Duration(milliseconds: 10));
+      onLog('coreInit OK');
 
-      // Загружаем плагины — ошибки не фатальны, собираем в warnings
-      final pluginErrors = await CoreBridge.instance.loadDefaultPlugins();
+      await Future.delayed(const Duration(milliseconds: 20));
 
-      if (pluginErrors.isNotEmpty) {
-        for (final e in pluginErrors.entries) {
-          _warnings.add('Plugin ${e.key}: ${e.value}');
-          debugPrint('[AppState] plugin warning: ${e.key}: ${e.value}');
+      final plugins = [
+        (
+          'storage_memory',
+          'assets/plugins/storage_memory.wasm',
+          'assets/plugins/storage_memory.manifest.toml',
+        ),
+        (
+          'crypto_aes',
+          'assets/plugins/crypto_aes.wasm',
+          'assets/plugins/crypto_aes.manifest.toml',
+        ),
+        (
+          'transport_ntfy',
+          'assets/plugins/transport_ntfy.wasm',
+          'assets/plugins/transport_ntfy.manifest.toml',
+        ),
+      ];
+
+      for (final (name, wasmPath, manifestPath) in plugins) {
+        onLog('loading $name...');
+        try {
+          await CoreBridge.instance.loadOnePlugin(
+            name: name,
+            wasmPath: wasmPath,
+            manifestPath: manifestPath,
+          );
+          onLog('$name OK');
+        } catch (e) {
+          onLog('$name FAILED: $e');
+          // Не останавливаемся — пробуем остальные
         }
       }
 
-      await Future.delayed(const Duration(milliseconds: 10));
-
-      // configure transport — тоже не фатально
-      final transportResult =
-          await CoreBridge.instance.configureTransport(myAddress: address);
-
-      if (!transportResult.ok) {
-        _warnings.add(
-            'Transport not configured: ${transportResult.warning ?? transportResult.error ?? "unknown"}');
-        debugPrint('[AppState] transport warning: ${transportResult.warning}');
+      onLog('configure transport: $address...');
+      try {
+        final result = await CoreBridge.instance.configureTransport(
+          myAddress: address,
+        );
+        onLog('transport: $result');
+      } catch (e) {
+        onLog('transport configure failed: $e (offline mode)');
       }
 
-      // Всегда помечаем как initialized — пусть работает в offline если нет транспорта
       _initialized = true;
-    } catch (e, stack) {
-      debugPrint('[AppState] fatal error: $e\n$stack');
-      _error = '$e';
+      onLog('initialized!');
+    } catch (e, st) {
+      _error = '$e\n$st';
+      onLog('FATAL: $e');
     }
 
     _loading = false;

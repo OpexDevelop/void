@@ -15,7 +15,11 @@ class _SetupScreenState extends State<SetupScreen> {
   final _addressController = TextEditingController();
   bool _loading = false;
   String? _error;
-  List<String> _warnings = [];
+  final List<String> _log = [];
+
+  void _addLog(String msg) {
+    if (mounted) setState(() => _log.add(msg));
+  }
 
   @override
   void dispose() {
@@ -33,40 +37,37 @@ class _SetupScreenState extends State<SetupScreen> {
     setState(() {
       _loading = true;
       _error = null;
-      _warnings = [];
+      _log.clear();
     });
 
-    final app = context.read<AppState>();
-    await app.initialize(address: address);
+    try {
+      _addLog('1. coreInit()...');
+      final app = context.read<AppState>();
+      await app.initializeWithLog(address: address, onLog: _addLog);
 
-    if (!mounted) return;
-
-    if (app.error != null) {
-      setState(() {
-        _error = app.error;
-        _loading = false;
-      });
-      return;
-    }
-
-    // Есть предупреждения — показываем их но не блокируем
-    if (app.warnings.isNotEmpty) {
-      setState(() {
-        _warnings = app.warnings;
-        _loading = false;
-      });
-
-      // Показываем предупреждения и продолжаем через 2 сек
-      await Future.delayed(const Duration(seconds: 2));
       if (!mounted) return;
+
+      if (app.error != null) {
+        setState(() {
+          _error = app.error;
+          _loading = false;
+        });
+        return;
+      }
+
+      _addLog('OK — opening app...');
+      await Future.delayed(const Duration(milliseconds: 300));
+
+      if (!mounted) return;
+      context.read<ChatState>().init();
+      context.read<PluginsState>().refresh();
+      Navigator.of(context).pop();
+    } catch (e, st) {
+      setState(() {
+        _error = '$e\n\n$st';
+        _loading = false;
+      });
     }
-
-    if (!mounted) return;
-
-    context.read<ChatState>().init();
-    context.read<PluginsState>().refresh();
-
-    Navigator.of(context).pop();
   }
 
   @override
@@ -78,14 +79,6 @@ class _SetupScreenState extends State<SetupScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-                'Enter your address.\nShare it with others to receive messages.'),
-            const SizedBox(height: 4),
-            const Text(
-              'Example: opex777',
-              style: TextStyle(color: Colors.grey, fontSize: 12),
-            ),
-            const SizedBox(height: 16),
             TextField(
               controller: _addressController,
               decoration: const InputDecoration(
@@ -97,73 +90,37 @@ class _SetupScreenState extends State<SetupScreen> {
               enableSuggestions: false,
               onSubmitted: (_) => _loading ? null : _start(),
             ),
-            if (_loading) ...[
-              const SizedBox(height: 16),
-              const Row(
-                children: [
-                  SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                  SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      'Loading plugins...',
-                      style: TextStyle(color: Colors.grey),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-            // Warnings (не блокирующие)
-            if (_warnings.isNotEmpty) ...[
+            if (_log.isNotEmpty) ...[
               const SizedBox(height: 12),
               Container(
-                constraints: const BoxConstraints(maxHeight: 150),
+                width: double.maxFinite,
+                constraints: const BoxConstraints(maxHeight: 250),
                 decoration: BoxDecoration(
-                  color: Colors.orange.shade900.withOpacity(0.3),
+                  color: Colors.black87,
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.orange.shade700),
                 ),
                 child: SingleChildScrollView(
                   padding: const EdgeInsets.all(8),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        '⚠ Some plugins failed (offline mode)',
-                        style: TextStyle(
-                          color: Colors.orange,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 12,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      ..._warnings.map(
-                        (w) => Text(
-                          w,
-                          style: const TextStyle(
-                            fontSize: 10,
-                            fontFamily: 'monospace',
-                            color: Colors.orangeAccent,
-                          ),
-                        ),
-                      ),
-                    ],
+                  child: SelectableText(
+                    _log.join('\n'),
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontFamily: 'monospace',
+                      color: Colors.greenAccent,
+                    ),
                   ),
                 ),
               ),
             ],
-            // Фатальная ошибка
             if (_error != null) ...[
               const SizedBox(height: 12),
               Container(
+                width: double.maxFinite,
                 constraints: const BoxConstraints(maxHeight: 200),
                 decoration: BoxDecoration(
-                  color: Colors.red.shade900.withOpacity(0.3),
+                  color: Colors.red.shade900.withOpacity(0.4),
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.red.shade700),
+                  border: Border.all(color: Colors.red),
                 ),
                 child: SingleChildScrollView(
                   padding: const EdgeInsets.all(8),
@@ -182,34 +139,25 @@ class _SetupScreenState extends State<SetupScreen> {
         ),
       ),
       actions: [
-        if (_warnings.isNotEmpty && !_loading)
-          TextButton(
-            onPressed: () {
-              context.read<ChatState>().init();
-              context.read<PluginsState>().refresh();
-              Navigator.of(context).pop();
-            },
-            child: const Text('Continue anyway'),
-          ),
-        if (_error == null || _error!.isEmpty)
-          FilledButton(
-            onPressed: _loading ? null : _start,
-            child: _loading
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Text('Start'),
-          ),
         if (_error != null)
-          FilledButton(
+          TextButton(
             onPressed: () => setState(() {
               _error = null;
-              _warnings = [];
+              _log.clear();
+              _loading = false;
             }),
             child: const Text('Retry'),
           ),
+        FilledButton(
+          onPressed: _loading ? null : _start,
+          child: _loading
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('Start'),
+        ),
       ],
     );
   }
