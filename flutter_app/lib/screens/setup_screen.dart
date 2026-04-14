@@ -57,50 +57,71 @@ class _SetupScreenState extends State<SetupScreen> {
   Widget build(BuildContext context) {
     return AlertDialog(
       title: const Text('Start Messenger'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Enter your address.\n'
-            'Share it with others to receive messages.',
-          ),
-          const SizedBox(height: 4),
-          const Text(
-            'Example: opex777',
-            style: TextStyle(color: Colors.grey, fontSize: 12),
-          ),
-          const SizedBox(height: 16),
-          TextField(
-            controller: _addressController,
-            decoration: InputDecoration(
-              labelText: 'Your address',
-              hintText: 'opex777',
-              border: const OutlineInputBorder(),
-              errorText: _error,
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Enter your address.\nShare it with others to receive messages.'),
+            const SizedBox(height: 4),
+            const Text(
+              'Example: opex777',
+              style: TextStyle(color: Colors.grey, fontSize: 12),
             ),
-            autocorrect: false,
-            enableSuggestions: false,
-            onSubmitted: (_) => _loading ? null : _start(),
-          ),
-          if (_loading) ...[
             const SizedBox(height: 16),
-            const Row(
-              children: [
-                SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
-                SizedBox(width: 12),
-                Text(
-                  'Loading plugins...',
-                  style: TextStyle(color: Colors.grey),
-                ),
-              ],
+            TextField(
+              controller: _addressController,
+              decoration: const InputDecoration(
+                labelText: 'Your address',
+                hintText: 'opex777',
+                border: OutlineInputBorder(),
+              ),
+              autocorrect: false,
+              enableSuggestions: false,
+              onSubmitted: (_) => _loading ? null : _start(),
             ),
+            if (_loading) ...[
+              const SizedBox(height: 16),
+              const Row(
+                children: [
+                  SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  SizedBox(width: 12),
+                  Text(
+                    'Loading plugins...',
+                    style: TextStyle(color: Colors.grey),
+                  ),
+                ],
+              ),
+            ],
+            // Показываем полный текст ошибки со скроллом
+            if (_error != null) ...[
+              const SizedBox(height: 12),
+              Container(
+                constraints: const BoxConstraints(maxHeight: 200),
+                decoration: BoxDecoration(
+                  color: Colors.red.shade900.withOpacity(0.3),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.red.shade700),
+                ),
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(8),
+                  child: SelectableText(
+                    _error!,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontFamily: 'monospace',
+                      color: Colors.redAccent,
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ],
-        ],
+        ),
       ),
       actions: [
         FilledButton(

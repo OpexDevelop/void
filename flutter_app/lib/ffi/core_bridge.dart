@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'core_ffi.dart';
 import '../models/message.dart';
@@ -25,7 +26,8 @@ class CoreBridge {
     });
 
     _transportPollTimer?.cancel();
-    _transportPollTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+    _transportPollTimer =
+        Timer.periodic(const Duration(seconds: 3), (_) {
       _pollTransport();
     });
   }
@@ -59,45 +61,63 @@ class CoreBridge {
     corePollTransport(_lastSeenTimestamp.toString());
   }
 
-  /// Dart знает только: "у нас есть адрес, передай его транспорту"
-  /// Что такое адрес для конкретного плагина — не его дело
   Future<bool> configureTransport({required String myAddress}) async {
     final result = jsonDecode(coreConfigureTransport(myAddress));
     return result['ok'] == true;
   }
 
-  Future<void> loadDefaultPlugins() async {
+  /// Возвращает Map<pluginName, errorMessage> — пустой если всё ок
+  Future<Map<String, String>> loadDefaultPlugins() async {
+    final errors = <String, String>{};
+
     final defaults = [
       (
         'storage_memory',
         'assets/plugins/storage_memory.wasm',
-        'assets/plugins/storage_memory.manifest.toml'
+        'assets/plugins/storage_memory.manifest.toml',
       ),
       (
         'crypto_aes',
         'assets/plugins/crypto_aes.wasm',
-        'assets/plugins/crypto_aes.manifest.toml'
+        'assets/plugins/crypto_aes.manifest.toml',
       ),
       (
         'transport_ntfy',
         'assets/plugins/transport_ntfy.wasm',
-        'assets/plugins/transport_ntfy.manifest.toml'
+        'assets/plugins/transport_ntfy.manifest.toml',
       ),
     ];
 
     for (final (name, wasmPath, manifestPath) in defaults) {
       try {
         final wasmData = await rootBundle.load(wasmPath);
-        final manifestStr = await rootBundle.loadString(manifestPath);
-        await loadPlugin(wasmData.buffer.asUint8List().toList(), manifestStr);
+        final manifestRaw = await rootBundle.loadString(manifestPath);
+        final manifest = manifestRaw
+            .trimLeft()
+            .replaceAll('\r\n', '\n')
+            .replaceAll('\r', '\n');
+
+        debugPrint('Loading plugin $name...');
+        debugPrint('Manifest preview: ${manifest.substring(0, manifest.length.clamp(0, 100))}');
+
+        await loadPlugin(
+          wasmData.buffer.asUint8List().toList(),
+          manifest,
+        );
+
+        debugPrint('Plugin $name loaded OK');
       } catch (e) {
-        print('Default plugin $name not found in assets, skipping: $e');
+        debugPrint('Plugin $name FAILED: $e');
+        errors[name] = e.toString();
       }
     }
+
+    return errors;
   }
 
   Future<PluginInfo?> loadPlugin(List<int> wasmBytes, String manifest) async {
     final response = coreLoadPlugin(wasmBytes, manifest);
+    debugPrint('loadPlugin response: $response');
     final json = jsonDecode(response);
     if (json['ok'] == true) {
       return PluginInfo.fromJson(json['plugin'] as Map<String, dynamic>);
