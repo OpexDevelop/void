@@ -33,16 +33,20 @@ jobs:
       with:
         targets: aarch64-linux-android,wasm32-wasip1
 
-    - name: Cache cargo-ndk
-      id: cache-ndk
+    - name: Cache cargo bins
+      id: cache-cargo-bins
       uses: actions/cache@v4
       with:
-        path: ~/.cargo/bin/cargo-ndk
-        key: ${{ runner.os }}-cargo-ndk-v1
+        path: ~/.cargo/bin
+        key: ${{ runner.os }}-cargo-bins-ndk-frb-v1
 
     - name: Install cargo-ndk
-      if: steps.cache-ndk.outputs.cache-hit != 'true'
+      if: steps.cache-cargo-bins.outputs.cache-hit != 'true'
       run: cargo install cargo-ndk --locked
+
+    - name: Install flutter_rust_bridge_codegen
+      if: steps.cache-cargo-bins.outputs.cache-hit != 'true'
+      run: cargo install flutter_rust_bridge_codegen --locked
 
     - name: Setup Flutter
       uses: subosito/flutter-action@v2
@@ -51,10 +55,7 @@ jobs:
         channel: 'stable'
         cache: true
 
-    - name: Install flutter_rust_bridge_codegen
-      run: cargo install flutter_rust_bridge_codegen --locked
-
-    - name: Cache Cargo
+    - name: Cache Cargo registry + target
       uses: actions/cache@v4
       with:
         path: |
