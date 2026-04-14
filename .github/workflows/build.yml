@@ -21,11 +21,9 @@ jobs:
         distribution: 'temurin'
         java-version: '17'
 
-    # Исправлено: убраны неподдерживаемые параметры
     - name: Setup Android SDK tools
       uses: android-actions/setup-android@v3
 
-    # NDK и build-tools ставим вручную через sdkmanager
     - name: Install Android NDK and build-tools
       run: |
         sdkmanager "build-tools;34.0.0" "platforms;android-34" "ndk;26.1.10909125"
@@ -46,7 +44,6 @@ jobs:
         channel: 'stable'
         cache: true
 
-    # Кэш разбит на два — Cargo отдельно, target отдельно
     - name: Cache Cargo registry
       uses: actions/cache@v4
       with:
@@ -139,6 +136,7 @@ jobs:
                 release {
                     signingConfig = signingConfigs.debug
                     minifyEnabled = false
+                    shrinkResources = false
                 }
             }
         }
@@ -161,13 +159,25 @@ jobs:
         android.enableJetifier=true
         EOF
 
+    - name: Disable shrink in build.gradle.kts if exists
+      working-directory: flutter_app
+      run: |
+        if [ -f android/build.gradle.kts ]; then
+          sed -i 's/shrinkResources = true/shrinkResources = false/g' android/build.gradle.kts
+          sed -i 's/shrinkResources true/shrinkResources false/g' android/build.gradle.kts
+        fi
+        if [ -f android/app/build.gradle.kts ]; then
+          sed -i 's/shrinkResources = true/shrinkResources = false/g' android/app/build.gradle.kts
+          sed -i 's/shrinkResources true/shrinkResources false/g' android/app/build.gradle.kts
+        fi
+
     - name: Flutter pub get
       working-directory: flutter_app
       run: flutter pub get
 
     - name: Build APK
       working-directory: flutter_app
-      run: flutter build apk --release --target-platform android-arm64
+      run: flutter build apk --release --target-platform android-arm64 --no-shrink
 
     - name: Upload APK
       uses: actions/upload-artifact@v4
@@ -192,5 +202,6 @@ jobs:
         files: |
           flutter_app/build/app/outputs/flutter-apk/app-release.apk
           flutter_app/assets/plugins/*.wasm
+          flutter_app/assets/plugins/*.manifest.toml
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
