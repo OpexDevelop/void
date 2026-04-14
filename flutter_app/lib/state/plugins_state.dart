@@ -1,6 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:file_picker/file_picker.dart';
-import '../ffi/core_bridge.dart';
+import '../src/rust/api.dart' as rust;
 import '../models/plugin_info.dart';
 
 class PluginsState extends ChangeNotifier {
@@ -9,7 +9,21 @@ class PluginsState extends ChangeNotifier {
   String? error;
 
   void refresh() {
-    plugins = CoreBridge.instance.listPlugins();
+    try {
+      final list = rust.listPlugins();
+      plugins = list.map((p) => PluginInfo(
+        id: p.id,
+        name: p.name,
+        version: p.version,
+        category: p.category,
+        description: p.description,
+        active: p.active,
+        network: p.network,
+        filesystem: p.filesystem,
+      )).toList();
+    } catch (e) {
+      debugPrint('[Plugins] refresh error: $e');
+    }
     notifyListeners();
   }
 
@@ -20,7 +34,6 @@ class PluginsState extends ChangeNotifier {
     final result = await FilePicker.platform.pickFiles(
       withData: true,
       allowMultiple: true,
-      dialogTitle: 'Select .wasm and .toml',
     );
     if (result == null) return;
 
@@ -42,8 +55,12 @@ class PluginsState extends ChangeNotifier {
           .trimLeft()
           .replaceAll('\r\n', '\n')
           .replaceAll('\r', '\n');
-      await CoreBridge.instance.installPlugin(wasmFile!.bytes!.toList(), manifest);
-      plugins = CoreBridge.instance.listPlugins();
+
+      await rust.loadPlugin(
+        wasm: wasmFile!.bytes!.toList(),
+        manifest: manifest,
+      );
+      refresh();
     } catch (e) {
       error = e.toString().replaceAll('Exception: ', '');
     }
@@ -53,8 +70,7 @@ class PluginsState extends ChangeNotifier {
   }
 
   void unload(String id) {
-    CoreBridge.instance.removePlugin(id);
-    plugins = CoreBridge.instance.listPlugins();
-    notifyListeners();
+    rust.unloadPlugin(id: id);
+    refresh();
   }
 }

@@ -1,5 +1,4 @@
 use serde::Deserialize;
-use crate::models::{PluginInfo, PluginPermissions};
 
 #[derive(Deserialize, Debug)]
 pub struct PluginManifest {
@@ -20,12 +19,8 @@ pub struct PluginSection {
 
 #[derive(Deserialize, Debug, Default)]
 pub struct CapabilitiesSection {
+    #[serde(default)]
     pub provides: Vec<String>,
-    #[serde(default)]
-    pub subscribes_to: Vec<String>,
-    #[serde(default)]
-    pub emits: Vec<String>,
-    /// Lifecycle hooks плагин объявляет явно: ["on_load", "on_unload"]
     #[serde(default)]
     pub lifecycle: Vec<String>,
 }
@@ -46,23 +41,5 @@ pub struct LimitsSection {
 }
 
 pub fn parse_manifest(toml_str: &str) -> Result<PluginManifest, String> {
-    toml::from_str(toml_str).map_err(|e| format!("manifest parse: {e}"))
-}
-
-pub fn manifest_to_plugin_info(m: &PluginManifest) -> crate::models::PluginInfo {
-    PluginInfo {
-        id: m.plugin.id.clone(),
-        name: m.plugin.name.clone(),
-        version: m.plugin.version.clone(),
-        category: m.plugin.category.clone(),
-        description: m.plugin.description.clone(),
-        active: true,
-        permissions: PluginPermissions {
-            network: m.permissions.network,
-            filesystem: m.permissions.filesystem,
-            contacts: m.permissions.contacts,
-            clipboard: m.permissions.clipboard,
-            notifications: m.permissions.notifications,
-        },
-    }
+    toml::from_str(toml_str).map_err(|e| format!("manifest parse error: {e}"))
 }

@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
-import '../ffi/core_bridge.dart';
+import '../src/rust/api.dart';
 import '../models/message.dart';
 import '../models/contact.dart';
 
@@ -8,17 +8,32 @@ class ChatState extends ChangeNotifier {
   final List<Contact> contacts = [];
   final Map<String, List<Message>> _msgs = {};
   bool sending = false;
-  StreamSubscription<Message>? _sub;
-
-  List<Message> messagesFor(String addr) => List.unmodifiable(_msgs[addr] ?? []);
+  Timer? _pollTimer;
+  int _lastTs = 0;
 
   void init() {
-    _sub?.cancel();
-    _sub = CoreBridge.instance.messageStream.listen((msg) {
-      final key = msg.from == 'me' ? msg.to : msg.from;
-      (_msgs[key] ??= []).add(msg);
+    _pollTimer?.cancel();
+    _pollTimer = Timer.periodic(const Duration(seconds: 3), (_) => _poll());
+  }
+
+  void _poll() {
+    final count = pollTransport(sinceTs: _lastTs);
+    if (count > 0) {
+      final events = pollEvents();
+      for (final e in events) {
+        if (e.kind == 'message_received') {
+          final key = e.from;
+          (_msgs[key] ??= []).add(Message(
+            from: e.from,
+            to: 'me',
+            text: e.text,
+            timestamp: DateTime.fromMillisecondsSinceEpoch(e.timestamp.toInt() * 1000),
+          ));
+          if (e.timestamp > _lastTs) _lastTs = e.timestamp.toInt();
+        }
+      }
       notifyListeners();
-    });
+    }
   }
 
   void addContact(String address, String name) {
@@ -34,7 +49,13 @@ class ChatState extends ChangeNotifier {
   }
 
   void openChat(String address) {
-    _msgs[address] = CoreBridge.instance.getMessages(address);
+    final msgs = getMessages(contact: address);
+    _msgs[address] = msgs.map((m) => Message(
+      from: m.from,
+      to: m.to,
+      text: m.text,
+      timestamp: DateTime.fromMillisecondsSinceEpoch(m.timestamp.toInt() * 1000),
+    )).toList();
     notifyListeners();
   }
 
@@ -42,14 +63,18 @@ class ChatState extends ChangeNotifier {
     sending = true;
     notifyListeners();
 
-    final ok = CoreBridge.instance.sendMessage(to, text);
-    if (ok) {
+    bool ok = false;
+    try {
+      await sendMessageRust(to: to, text: text);
       (_msgs[to] ??= []).add(Message(
         from: 'me',
         to: to,
         text: text,
         timestamp: DateTime.now(),
       ));
+      ok = true;
+    } catch (e) {
+      debugPrint('[Chat] send failed: $e');
     }
 
     sending = false;
@@ -57,9 +82,12 @@ class ChatState extends ChangeNotifier {
     return ok;
   }
 
+  List<Message> messagesFor(String addr) =>
+      List.unmodifiable(_msgs[addr] ?? []);
+
   @override
   void dispose() {
-    _sub?.cancel();
+    _pollTimer?.cancel();
     super.dispose();
   }
 }

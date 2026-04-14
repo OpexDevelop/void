@@ -12,8 +12,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+    - uses: actions/checkout@v4
 
     - name: Setup Java 17
       uses: actions/setup-java@v4
@@ -21,10 +20,10 @@ jobs:
         distribution: 'temurin'
         java-version: '17'
 
-    - name: Setup Android SDK tools
+    - name: Setup Android SDK
       uses: android-actions/setup-android@v3
 
-    - name: Install Android NDK and build-tools
+    - name: Install NDK
       run: |
         sdkmanager "build-tools;35.0.0" "platforms;android-35" "ndk;27.0.12077973"
         echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973" >> $GITHUB_ENV
@@ -34,15 +33,15 @@ jobs:
       with:
         targets: aarch64-linux-android,wasm32-wasip1
 
-    - name: Cache cargo-ndk binary
-      id: cache-cargo-ndk
+    - name: Cache cargo-ndk
+      id: cache-ndk
       uses: actions/cache@v4
       with:
         path: ~/.cargo/bin/cargo-ndk
-        key: ${{ runner.os }}-cargo-ndk-v3
+        key: ${{ runner.os }}-cargo-ndk-v1
 
     - name: Install cargo-ndk
-      if: steps.cache-cargo-ndk.outputs.cache-hit != 'true'
+      if: steps.cache-ndk.outputs.cache-hit != 'true'
       run: cargo install cargo-ndk --locked
 
     - name: Setup Flutter
@@ -52,139 +51,106 @@ jobs:
         channel: 'stable'
         cache: true
 
-    - name: Cache Cargo registry
+    - name: Install flutter_rust_bridge_codegen
+      run: cargo install flutter_rust_bridge_codegen --locked
+
+    - name: Cache Cargo
       uses: actions/cache@v4
       with:
         path: |
           ~/.cargo/registry/index/
           ~/.cargo/registry/cache/
           ~/.cargo/git/db/
-        key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-cargo-registry-
+          target/
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: ${{ runner.os }}-cargo-
 
-    - name: Cache Cargo target
+    - name: Cache Gradle
       uses: actions/cache@v4
       with:
-        path: target/
-        key: ${{ runner.os }}-cargo-target-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-cargo-target-
+        path: |
+          ~/.gradle/wrapper
+          ~/.gradle/caches
+        key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
 
-    - name: Cache Gradle wrapper
-      uses: actions/cache@v4
-      with:
-        path: ~/.gradle/wrapper
-        key: ${{ runner.os }}-gradle-wrapper-${{ hashFiles('**/gradle-wrapper.properties') }}
+    - name: Flutter pub get
+      working-directory: flutter_app
+      run: flutter pub get
 
-    - name: Cache Gradle caches
-      uses: actions/cache@v4
-      with:
-        path: ~/.gradle/caches
-        key: ${{ runner.os }}-gradle-caches-${{ hashFiles('**/*.gradle*') }}
-        restore-keys: |
-          ${{ runner.os }}-gradle-caches-
-
-    - name: Build Rust Core (Android ARM64)
-      working-directory: core
-      env:
-        ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
+    - name: Generate FRB bindings
       run: |
-        cargo ndk -t arm64-v8a \
-          -o ../flutter_app/android/app/src/main/jniLibs \
-          build --release
+        flutter_rust_bridge_codegen generate \
+          --rust-input core/src/api.rs \
+          --dart-output flutter_app/lib/src/rust/ \
+          --c-output flutter_app/ios/Runner/bridge_generated.h
 
-    - name: Build WASM Plugins
+    - name: Build WASM plugins
       run: |
         cargo build --release -p storage_memory --target wasm32-wasip1
         cargo build --release -p crypto_aes --target wasm32-wasip1
         cargo build --release -p transport_ntfy --target wasm32-wasip1
 
-    - name: Copy WASM to Flutter assets
+    - name: Copy WASM to assets
       run: |
         mkdir -p flutter_app/assets/plugins
         cp target/wasm32-wasip1/release/storage_memory.wasm  flutter_app/assets/plugins/
         cp target/wasm32-wasip1/release/crypto_aes.wasm      flutter_app/assets/plugins/
         cp target/wasm32-wasip1/release/transport_ntfy.wasm  flutter_app/assets/plugins/
-
-    - name: Copy manifests to Flutter assets
-      run: |
         cp plugins/storage_memory/manifest.toml  flutter_app/assets/plugins/storage_memory.manifest.toml
         cp plugins/crypto_aes/manifest.toml      flutter_app/assets/plugins/crypto_aes.manifest.toml
         cp plugins/transport_ntfy/manifest.toml  flutter_app/assets/plugins/transport_ntfy.manifest.toml
 
-    - name: Patch android/app/build.gradle
+    - name: Build Rust core for Android
+      working-directory: core
+      run: |
+        cargo ndk -t arm64-v8a \
+          -o ../flutter_app/android/app/src/main/jniLibs \
+          build --release
+
+    - name: Patch android build files
       working-directory: flutter_app
       run: |
+        rm -f android/app/build.gradle.kts android/build.gradle.kts
+
         cat > android/app/build.gradle << 'EOF'
         plugins {
             id "com.android.application"
             id "kotlin-android"
             id "dev.flutter.flutter-gradle-plugin"
         }
-
         android {
-            namespace = "com.example.flutter_app"
-            compileSdk = 35
-            ndkVersion = "27.0.12077973"
-
+            namespace "com.example.flutter_app"
+            compileSdk 35
+            ndkVersion "27.0.12077973"
             compileOptions {
-                sourceCompatibility = JavaVersion.VERSION_1_8
-                targetCompatibility = JavaVersion.VERSION_1_8
+                sourceCompatibility JavaVersion.VERSION_1_8
+                targetCompatibility JavaVersion.VERSION_1_8
             }
-
-            kotlinOptions {
-                jvmTarget = JavaVersion.VERSION_1_8
-            }
-
+            kotlinOptions { jvmTarget = "1.8" }
             defaultConfig {
-                applicationId = "com.example.flutter_app"
-                minSdk = 24
-                targetSdk = 35
-                versionCode = 1
-                versionName = "0.2.0-alpha"
+                applicationId "com.example.flutter_app"
+                minSdk 24
+                targetSdk 35
+                versionCode 1
+                versionName "0.2.0-alpha"
             }
-
             buildTypes {
                 release {
-                    signingConfig = signingConfigs.debug
-                    minifyEnabled = false
-                    shrinkResources = false
+                    signingConfig signingConfigs.debug
+                    minifyEnabled false
+                    shrinkResources false
                 }
             }
         }
-
-        flutter {
-            source = "../.."
-        }
-
-        dependencies {}
+        flutter { source = "../.." }
         EOF
 
-    - name: Patch android/gradle.properties
-      working-directory: flutter_app
-      run: |
         cat > android/gradle.properties << 'EOF'
         org.gradle.jvmargs=-Xmx2048m -XX:MaxMetaspaceSize=512m
         org.gradle.parallel=true
-        org.gradle.workers.max=2
         android.useAndroidX=true
         android.enableJetifier=true
         EOF
-
-    - name: Remove conflicting build.gradle.kts
-      working-directory: flutter_app
-      run: |
-        if [ -f android/app/build.gradle ] && [ -f android/app/build.gradle.kts ]; then
-          rm android/app/build.gradle.kts
-        fi
-        if [ -f android/build.gradle ] && [ -f android/build.gradle.kts ]; then
-          rm android/build.gradle.kts
-        fi
-
-    - name: Flutter pub get
-      working-directory: flutter_app
-      run: flutter pub get
 
     - name: Build APK
       working-directory: flutter_app
@@ -201,12 +167,10 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: wasm-plugins-${{ github.sha }}
-        path: |
-          flutter_app/assets/plugins/*.wasm
-          flutter_app/assets/plugins/*.manifest.toml
+        path: flutter_app/assets/plugins/
         retention-days: 30
 
-    - name: Create Release on tag
+    - name: Release on tag
       if: startsWith(github.ref, 'refs/tags/')
       uses: softprops/action-gh-release@v1
       with:

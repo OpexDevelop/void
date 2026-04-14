@@ -1,10 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_rust_bridge/flutter_rust_bridge.dart';
 import 'package:provider/provider.dart';
+import 'src/rust/frb_generated.dart';
 import 'state/app_state.dart';
+import 'state/chat_state.dart';
 import 'state/plugins_state.dart';
 import 'screens/home_screen.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await RustLib.init();
   runApp(const MessengerApp());
 }
 
@@ -16,6 +21,7 @@ class MessengerApp extends StatelessWidget {
     return MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => AppState()),
+        ChangeNotifierProvider(create: (_) => ChatState()),
         ChangeNotifierProvider(create: (_) => PluginsState()),
       ],
       child: MaterialApp(
