@@ -15,6 +15,7 @@ class _SetupScreenState extends State<SetupScreen> {
   final _addressController = TextEditingController();
   bool _loading = false;
   String? _error;
+  List<String> _warnings = [];
 
   @override
   void dispose() {
@@ -32,6 +33,7 @@ class _SetupScreenState extends State<SetupScreen> {
     setState(() {
       _loading = true;
       _error = null;
+      _warnings = [];
     });
 
     final app = context.read<AppState>();
@@ -47,22 +49,23 @@ class _SetupScreenState extends State<SetupScreen> {
       return;
     }
 
-    context.read<ChatState>().init();
-    context.read<PluginsState>().refresh();
-    Navigator.of(context).pop();
-  }
+    // Есть предупреждения — показываем их но не блокируем
+    if (app.warnings.isNotEmpty) {
+      setState(() {
+        _warnings = app.warnings;
+        _loading = false;
+      });
 
-  /// Войти без загрузки плагинов — только для диагностики
-  void _skipPlugins() {
-    final address = _addressController.text.trim();
-    if (address.isEmpty) {
-      setState(() => _error = 'Enter address first');
-      return;
+      // Показываем предупреждения и продолжаем через 2 сек
+      await Future.delayed(const Duration(seconds: 2));
+      if (!mounted) return;
     }
-    final app = context.read<AppState>();
-    app.forceInit(address: address);
+
+    if (!mounted) return;
+
     context.read<ChatState>().init();
     context.read<PluginsState>().refresh();
+
     Navigator.of(context).pop();
   }
 
@@ -106,13 +109,53 @@ class _SetupScreenState extends State<SetupScreen> {
                   SizedBox(width: 12),
                   Expanded(
                     child: Text(
-                      'Loading plugins... (may take 10-30s)',
-                      style: TextStyle(color: Colors.grey, fontSize: 12),
+                      'Loading plugins...',
+                      style: TextStyle(color: Colors.grey),
                     ),
                   ),
                 ],
               ),
             ],
+            // Warnings (не блокирующие)
+            if (_warnings.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Container(
+                constraints: const BoxConstraints(maxHeight: 150),
+                decoration: BoxDecoration(
+                  color: Colors.orange.shade900.withOpacity(0.3),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.orange.shade700),
+                ),
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        '⚠ Some plugins failed (offline mode)',
+                        style: TextStyle(
+                          color: Colors.orange,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      ..._warnings.map(
+                        (w) => Text(
+                          w,
+                          style: const TextStyle(
+                            fontSize: 10,
+                            fontFamily: 'monospace',
+                            color: Colors.orangeAccent,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+            // Фатальная ошибка
             if (_error != null) ...[
               const SizedBox(height: 12),
               Container(
@@ -139,24 +182,34 @@ class _SetupScreenState extends State<SetupScreen> {
         ),
       ),
       actions: [
-        if (_error != null && !_loading)
+        if (_warnings.isNotEmpty && !_loading)
           TextButton(
-            onPressed: _skipPlugins,
-            child: const Text(
-              'Skip plugins',
-              style: TextStyle(color: Colors.orange),
-            ),
+            onPressed: () {
+              context.read<ChatState>().init();
+              context.read<PluginsState>().refresh();
+              Navigator.of(context).pop();
+            },
+            child: const Text('Continue anyway'),
           ),
-        FilledButton(
-          onPressed: _loading ? null : _start,
-          child: _loading
-              ? const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Text('Start'),
-        ),
+        if (_error == null || _error!.isEmpty)
+          FilledButton(
+            onPressed: _loading ? null : _start,
+            child: _loading
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Text('Start'),
+          ),
+        if (_error != null)
+          FilledButton(
+            onPressed: () => setState(() {
+              _error = null;
+              _warnings = [];
+            }),
+            child: const Text('Retry'),
+          ),
       ],
     );
   }

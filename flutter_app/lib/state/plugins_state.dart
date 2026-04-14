@@ -13,7 +13,12 @@ class PluginsState extends ChangeNotifier {
   String? get lastError => _lastError;
 
   void refresh() {
-    _plugins = CoreBridge.instance.listPlugins();
+    try {
+      _plugins = CoreBridge.instance.listPlugins();
+    } catch (e) {
+      debugPrint('[PluginsState] refresh error: $e');
+      _plugins = [];
+    }
     notifyListeners();
   }
 
@@ -21,7 +26,6 @@ class PluginsState extends ChangeNotifier {
     _lastError = null;
     notifyListeners();
 
-    // Выбираем оба файла за один раз
     final result = await FilePicker.platform.pickFiles(
       type: FileType.any,
       withData: true,
@@ -31,7 +35,6 @@ class PluginsState extends ChangeNotifier {
 
     if (result == null || result.files.isEmpty) return;
 
-    // Находим wasm и toml среди выбранных
     PlatformFile? wasmFile;
     PlatformFile? tomlFile;
 
@@ -44,7 +47,6 @@ class PluginsState extends ChangeNotifier {
       }
     }
 
-    // Если не выбрали оба — просим по одному
     if (wasmFile == null) {
       _lastError = 'No .wasm file selected';
       notifyListeners();
@@ -60,14 +62,8 @@ class PluginsState extends ChangeNotifier {
     final wasmBytes = wasmFile.bytes;
     final tomlBytes = tomlFile.bytes;
 
-    if (wasmBytes == null) {
-      _lastError = 'Failed to read .wasm file';
-      notifyListeners();
-      return;
-    }
-
-    if (tomlBytes == null) {
-      _lastError = 'Failed to read .toml file';
+    if (wasmBytes == null || tomlBytes == null) {
+      _lastError = 'Failed to read files';
       notifyListeners();
       return;
     }
@@ -75,21 +71,19 @@ class PluginsState extends ChangeNotifier {
     _loading = true;
     notifyListeners();
 
-    // Убираем BOM и нормализуем переносы строк
     final manifestStr = String.fromCharCodes(tomlBytes)
         .trimLeft()
         .replaceAll('\r\n', '\n')
         .replaceAll('\r', '\n');
 
     try {
-      final info = await CoreBridge.instance.loadPlugin(
+      await CoreBridge.instance.loadPlugin(
         wasmBytes.toList(),
         manifestStr,
       );
-
-      if (info != null) {
-        _plugins = CoreBridge.instance.listPlugins();
-      }
+      _plugins = CoreBridge.instance.listPlugins();
+    } on PluginAlreadyLoadedException catch (e) {
+      _lastError = 'Plugin already loaded: $e';
     } catch (e) {
       _lastError = e.toString().replaceAll('Exception: ', '');
     } finally {

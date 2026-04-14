@@ -6,69 +6,58 @@ class AppState extends ChangeNotifier {
   bool _initialized = false;
   bool _loading = false;
   String? _error;
+  List<String> _warnings = [];
 
   String get myAddress => _myAddress;
   bool get initialized => _initialized;
   bool get loading => _loading;
   String? get error => _error;
+  List<String> get warnings => List.unmodifiable(_warnings);
 
   Future<void> initialize({required String address}) async {
     _myAddress = address;
     _error = null;
+    _warnings = [];
     _loading = true;
     notifyListeners();
 
+    // Маленькая задержка чтобы UI успел перерисоваться
     await Future.delayed(const Duration(milliseconds: 50));
 
     try {
       CoreBridge.instance.initialize();
-      await Future.delayed(const Duration(milliseconds: 16));
+      await Future.delayed(const Duration(milliseconds: 10));
 
+      // Загружаем плагины — ошибки не фатальны, собираем в warnings
       final pluginErrors = await CoreBridge.instance.loadDefaultPlugins();
 
       if (pluginErrors.isNotEmpty) {
-        final msg = pluginErrors.entries
-            .map((e) => '${e.key}:\n${e.value}')
-            .join('\n\n');
-        _error = 'Plugin errors:\n$msg';
-        _loading = false;
-        notifyListeners();
-        return;
+        for (final e in pluginErrors.entries) {
+          _warnings.add('Plugin ${e.key}: ${e.value}');
+          debugPrint('[AppState] plugin warning: ${e.key}: ${e.value}');
+        }
       }
 
-      await Future.delayed(const Duration(milliseconds: 16));
+      await Future.delayed(const Duration(milliseconds: 10));
 
-      final ok = await CoreBridge.instance.configureTransport(
-        myAddress: address,
-      );
+      // configure transport — тоже не фатально
+      final transportResult =
+          await CoreBridge.instance.configureTransport(myAddress: address);
 
-      if (!ok) {
-        final loaded = CoreBridge.instance.listPlugins();
-        final names = loaded.isEmpty
-            ? 'none'
-            : loaded.map((p) => '${p.id}(${p.category})').join(', ');
-        _error = 'Failed to configure transport.\nLoaded: $names';
-        _loading = false;
-        notifyListeners();
-        return;
+      if (!transportResult.ok) {
+        _warnings.add(
+            'Transport not configured: ${transportResult.warning ?? transportResult.error ?? "unknown"}');
+        debugPrint('[AppState] transport warning: ${transportResult.warning}');
       }
 
+      // Всегда помечаем как initialized — пусть работает в offline если нет транспорта
       _initialized = true;
     } catch (e, stack) {
-      _error = 'Exception: $e\n\n$stack';
+      debugPrint('[AppState] fatal error: $e\n$stack');
+      _error = '$e';
     }
 
     _loading = false;
-    notifyListeners();
-  }
-
-  /// Войти без плагинов — для диагностики
-  void forceInit({required String address}) {
-    _myAddress = address;
-    _error = null;
-    _loading = false;
-    _initialized = true;
-    CoreBridge.instance.initialize();
     notifyListeners();
   }
 }
