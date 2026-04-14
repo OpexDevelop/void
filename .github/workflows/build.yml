@@ -5,7 +5,7 @@ on:
     branches: [ main, develop ]
   pull_request:
     branches: [ main ]
-  workflow_dispatch:  # Ручной запуск
+  workflow_dispatch:
 
 jobs:
   build:
@@ -62,21 +62,19 @@ jobs:
         key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
 
     - name: Build Rust Core (Android ARM64)
-      working-directory: void/core
+      working-directory: core
       run: |
         cargo ndk -t arm64-v8a \
           -o ../flutter_app/android/app/src/main/jniLibs \
           build --release
 
     - name: Build WASM Plugins
-      working-directory: void
       run: |
         cargo build --release -p storage_memory --target wasm32-wasip1
         cargo build --release -p crypto_aes --target wasm32-wasip1
         cargo build --release -p transport_ntfy --target wasm32-wasip1
 
     - name: Copy WASM to Flutter assets
-      working-directory: void
       run: |
         mkdir -p flutter_app/assets/plugins
         cp target/wasm32-wasip1/release/storage_memory.wasm \
@@ -87,7 +85,6 @@ jobs:
            flutter_app/assets/plugins/
 
     - name: Copy manifests to Flutter assets
-      working-directory: void
       run: |
         cp plugins/storage_memory/manifest.toml \
            flutter_app/assets/plugins/storage_memory.manifest.toml
@@ -97,7 +94,7 @@ jobs:
            flutter_app/assets/plugins/transport_ntfy.manifest.toml
 
     - name: Create build.gradle
-      working-directory: void/flutter_app
+      working-directory: flutter_app
       run: |
         cat > android/app/build.gradle << 'EOF'
         plugins {
@@ -144,7 +141,7 @@ jobs:
         EOF
 
     - name: Create gradle.properties
-      working-directory: void/flutter_app
+      working-directory: flutter_app
       run: |
         mkdir -p android
         cat > android/gradle.properties << 'EOF'
@@ -156,11 +153,11 @@ jobs:
         EOF
 
     - name: Flutter pub get
-      working-directory: void/flutter_app
+      working-directory: flutter_app
       run: flutter pub get
 
     - name: Build APK
-      working-directory: void/flutter_app
+      working-directory: flutter_app
       run: |
         flutter build apk --release --target-platform android-arm64
 
@@ -168,7 +165,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: messenger-apk-${{ github.sha }}
-        path: void/flutter_app/build/app/outputs/flutter-apk/app-release.apk
+        path: flutter_app/build/app/outputs/flutter-apk/app-release.apk
         retention-days: 30
 
     - name: Upload WASM plugins
@@ -176,8 +173,8 @@ jobs:
       with:
         name: wasm-plugins-${{ github.sha }}
         path: |
-          void/flutter_app/assets/plugins/*.wasm
-          void/flutter_app/assets/plugins/*.manifest.toml
+          flutter_app/assets/plugins/*.wasm
+          flutter_app/assets/plugins/*.manifest.toml
         retention-days: 30
 
     - name: Create Release (on tag)
@@ -185,8 +182,8 @@ jobs:
       uses: softprops/action-gh-release@v1
       with:
         files: |
-          void/flutter_app/build/app/outputs/flutter-apk/app-release.apk
-          void/flutter_app/assets/plugins/*.wasm
-          void/flutter_app/assets/plugins/*.manifest.toml
+          flutter_app/build/app/outputs/flutter-apk/app-release.apk
+          flutter_app/assets/plugins/*.wasm
+          flutter_app/assets/plugins/*.manifest.toml
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

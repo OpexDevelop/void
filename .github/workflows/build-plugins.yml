@@ -4,8 +4,8 @@ on:
   workflow_dispatch:
   push:
     paths:
-      - 'void/plugins/**'
-      - 'void/Cargo.toml'
+      - 'plugins/**'
+      - 'Cargo.toml'
 
 jobs:
   build-plugins:
@@ -28,11 +28,10 @@ jobs:
           ~/.cargo/registry/index/
           ~/.cargo/registry/cache/
           ~/.cargo/git/db/
-          void/target/
-        key: ${{ runner.os }}-cargo-wasm-${{ hashFiles('void/**/Cargo.lock') }}
+          target/
+        key: ${{ runner.os }}-cargo-wasm-${{ hashFiles('**/Cargo.lock') }}
 
     - name: Build WASM Plugins
-      working-directory: void
       run: |
         cargo build --release -p storage_memory --target wasm32-wasip1
         cargo build --release -p crypto_aes --target wasm32-wasip1
@@ -43,8 +42,8 @@ jobs:
       with:
         name: wasm-plugins-${{ github.sha }}
         path: |
-          void/target/wasm32-wasip1/release/storage_memory.wasm
-          void/target/wasm32-wasip1/release/crypto_aes.wasm
-          void/target/wasm32-wasip1/release/transport_ntfy.wasm
-          void/plugins/*/manifest.toml
+          target/wasm32-wasip1/release/storage_memory.wasm
+          target/wasm32-wasip1/release/crypto_aes.wasm
+          target/wasm32-wasip1/release/transport_ntfy.wasm
+          plugins/*/manifest.toml
         retention-days: 30
