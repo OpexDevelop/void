@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:isolate';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'core_ffi.dart';
@@ -26,8 +27,7 @@ class CoreBridge {
     });
 
     _transportPollTimer?.cancel();
-    _transportPollTimer =
-        Timer.periodic(const Duration(seconds: 3), (_) {
+    _transportPollTimer = Timer.periodic(const Duration(seconds: 3), (_) {
       _pollTransport();
     });
   }
@@ -41,14 +41,12 @@ class CoreBridge {
         if (event['kind'] == 'message_received') {
           final p = event['payload'] as Map<String, dynamic>;
           final ts = (p['timestamp'] as num?)?.toInt() ?? 0;
-
           _messageController.add(Message(
             from: p['from'] as String,
             to: 'me',
             text: p['text'] as String,
             timestamp: DateTime.fromMillisecondsSinceEpoch(ts * 1000),
           ));
-
           if (ts > _lastSeenTimestamp) {
             _lastSeenTimestamp = ts;
           }
@@ -66,7 +64,45 @@ class CoreBridge {
     return result['ok'] == true;
   }
 
-  /// Возвращает Map<pluginName, errorMessage> — пустой если всё ок
+  /// Загружает один плагин с таймаутом чтобы не висеть вечно
+  Future<String?> _loadOnePlugin(
+    String name,
+    String wasmPath,
+    String manifestPath,
+  ) async {
+    try {
+      final wasmData = await rootBundle.load(wasmPath);
+      final manifestRaw = await rootBundle.loadString(manifestPath);
+      final manifest = manifestRaw
+          .trimLeft()
+          .replaceAll('\r\n', '\n')
+          .replaceAll('\r', '\n');
+
+      final wasmBytes = wasmData.buffer.asUint8List().toList();
+
+      debugPrint('[$name] wasm size: ${wasmBytes.length} bytes');
+      debugPrint('[$name] manifest: ${manifest.substring(0, manifest.length.clamp(0, 80))}');
+
+      // Даём UI вздохнуть перед тяжёлым FFI вызовом
+      await Future.delayed(const Duration(milliseconds: 16));
+
+      final response = coreLoadPlugin(wasmBytes, manifest);
+      final json = jsonDecode(response);
+
+      if (json['ok'] == true) {
+        debugPrint('[$name] loaded OK');
+        return null; // null = успех
+      } else {
+        final err = json['error']?.toString() ?? 'unknown error';
+        debugPrint('[$name] FAILED: $err');
+        return err;
+      }
+    } catch (e) {
+      debugPrint('[$name] EXCEPTION: $e');
+      return e.toString();
+    }
+  }
+
   Future<Map<String, String>> loadDefaultPlugins() async {
     final errors = <String, String>{};
 
@@ -89,35 +125,27 @@ class CoreBridge {
     ];
 
     for (final (name, wasmPath, manifestPath) in defaults) {
-      try {
-        final wasmData = await rootBundle.load(wasmPath);
-        final manifestRaw = await rootBundle.loadString(manifestPath);
-        final manifest = manifestRaw
-            .trimLeft()
-            .replaceAll('\r\n', '\n')
-            .replaceAll('\r', '\n');
+      // Таймаут 30 секунд на каждый плагин
+      final error = await _loadOnePlugin(name, wasmPath, manifestPath)
+          .timeout(
+        const Duration(seconds: 30),
+        onTimeout: () => 'timeout after 30s',
+      );
 
-        debugPrint('Loading plugin $name...');
-        debugPrint('Manifest preview: ${manifest.substring(0, manifest.length.clamp(0, 100))}');
-
-        await loadPlugin(
-          wasmData.buffer.asUint8List().toList(),
-          manifest,
-        );
-
-        debugPrint('Plugin $name loaded OK');
-      } catch (e) {
-        debugPrint('Plugin $name FAILED: $e');
-        errors[name] = e.toString();
+      if (error != null) {
+        errors[name] = error;
       }
+
+      // Пауза между плагинами чтобы UI не замерзал
+      await Future.delayed(const Duration(milliseconds: 32));
     }
 
     return errors;
   }
 
   Future<PluginInfo?> loadPlugin(List<int> wasmBytes, String manifest) async {
+    await Future.delayed(const Duration(milliseconds: 16));
     final response = coreLoadPlugin(wasmBytes, manifest);
-    debugPrint('loadPlugin response: $response');
     final json = jsonDecode(response);
     if (json['ok'] == true) {
       return PluginInfo.fromJson(json['plugin'] as Map<String, dynamic>);

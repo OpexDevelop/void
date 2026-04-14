@@ -49,7 +49,20 @@ class _SetupScreenState extends State<SetupScreen> {
 
     context.read<ChatState>().init();
     context.read<PluginsState>().refresh();
+    Navigator.of(context).pop();
+  }
 
+  /// Войти без загрузки плагинов — только для диагностики
+  void _skipPlugins() {
+    final address = _addressController.text.trim();
+    if (address.isEmpty) {
+      setState(() => _error = 'Enter address first');
+      return;
+    }
+    final app = context.read<AppState>();
+    app.forceInit(address: address);
+    context.read<ChatState>().init();
+    context.read<PluginsState>().refresh();
     Navigator.of(context).pop();
   }
 
@@ -62,7 +75,8 @@ class _SetupScreenState extends State<SetupScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Enter your address.\nShare it with others to receive messages.'),
+            const Text(
+                'Enter your address.\nShare it with others to receive messages.'),
             const SizedBox(height: 4),
             const Text(
               'Example: opex777',
@@ -90,14 +104,15 @@ class _SetupScreenState extends State<SetupScreen> {
                     child: CircularProgressIndicator(strokeWidth: 2),
                   ),
                   SizedBox(width: 12),
-                  Text(
-                    'Loading plugins...',
-                    style: TextStyle(color: Colors.grey),
+                  Expanded(
+                    child: Text(
+                      'Loading plugins... (may take 10-30s)',
+                      style: TextStyle(color: Colors.grey, fontSize: 12),
+                    ),
                   ),
                 ],
               ),
             ],
-            // Показываем полный текст ошибки со скроллом
             if (_error != null) ...[
               const SizedBox(height: 12),
               Container(
@@ -124,6 +139,14 @@ class _SetupScreenState extends State<SetupScreen> {
         ),
       ),
       actions: [
+        if (_error != null && !_loading)
+          TextButton(
+            onPressed: _skipPlugins,
+            child: const Text(
+              'Skip plugins',
+              style: TextStyle(color: Colors.orange),
+            ),
+          ),
         FilledButton(
           onPressed: _loading ? null : _start,
           child: _loading

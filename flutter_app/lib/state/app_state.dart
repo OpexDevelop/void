@@ -22,34 +22,32 @@ class AppState extends ChangeNotifier {
 
     try {
       CoreBridge.instance.initialize();
-      await Future.delayed(const Duration(milliseconds: 10));
+      await Future.delayed(const Duration(milliseconds: 16));
 
-      // Показываем каждую ошибку загрузки плагина
       final pluginErrors = await CoreBridge.instance.loadDefaultPlugins();
 
       if (pluginErrors.isNotEmpty) {
-        _error = pluginErrors.entries
+        final msg = pluginErrors.entries
             .map((e) => '${e.key}:\n${e.value}')
             .join('\n\n');
+        _error = 'Plugin errors:\n$msg';
         _loading = false;
         notifyListeners();
         return;
       }
 
-      await Future.delayed(const Duration(milliseconds: 10));
+      await Future.delayed(const Duration(milliseconds: 16));
 
       final ok = await CoreBridge.instance.configureTransport(
         myAddress: address,
       );
 
       if (!ok) {
-        // Показать список загруженных плагинов для диагностики
         final loaded = CoreBridge.instance.listPlugins();
-        final loadedStr = loaded.isEmpty
+        final names = loaded.isEmpty
             ? 'none'
-            : loaded.map((p) => '${p.id} (${p.category})').join(', ');
-        _error = 'Failed to configure transport.\n'
-            'Loaded plugins: $loadedStr';
+            : loaded.map((p) => '${p.id}(${p.category})').join(', ');
+        _error = 'Failed to configure transport.\nLoaded: $names';
         _loading = false;
         notifyListeners();
         return;
@@ -57,10 +55,20 @@ class AppState extends ChangeNotifier {
 
       _initialized = true;
     } catch (e, stack) {
-      _error = '$e\n\n$stack';
+      _error = 'Exception: $e\n\n$stack';
     }
 
     _loading = false;
+    notifyListeners();
+  }
+
+  /// Войти без плагинов — для диагностики
+  void forceInit({required String address}) {
+    _myAddress = address;
+    _error = null;
+    _loading = false;
+    _initialized = true;
+    CoreBridge.instance.initialize();
     notifyListeners();
   }
 }
