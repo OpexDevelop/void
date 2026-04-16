@@ -4,8 +4,8 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
-use crate::engine::{HostContext, PluginInstance, PluginRuntime};
-use crate::event::{Event, EventMeta, SYS_SHUTDOWN};
+use crate::engine::{HostContext, PluginInstance, PluginRuntime, Permissions};
+use crate::event::{Event, SYS_SHUTDOWN};
 use crate::manifest::{PluginManifest, RestartPolicy};
 
 fn backoff(attempt: u32) -> Duration {
@@ -47,7 +47,10 @@ async fn run(
 
     let mut instance: Box<dyn PluginInstance> = match make_instance() {
         Ok(i)  => i,
-        Err(e) => { error!(plugin = %id, error = %e, "instantiation failed"); return; }
+        Err(e) => {
+            error!(plugin = %id, error = %e, "instantiation failed");
+            return;
+        }
     };
 
     let mut retries = 0u32;
@@ -95,7 +98,10 @@ async fn run(
                     tokio::time::sleep(delay).await;
                     match make_instance() {
                         Ok(new) => { instance = new; }
-                        Err(e2) => { error!(plugin = %id, error = %e2, "restart failed"); return; }
+                        Err(e2) => {
+                            error!(plugin = %id, error = %e2, "restart failed");
+                            return;
+                        }
                     }
                 } else {
                     error!(plugin = %id, "max retries exceeded");
@@ -109,7 +115,6 @@ async fn run(
 }
 
 fn build_ctx(manifest: &PluginManifest, event_tx: mpsc::UnboundedSender<Event>) -> HostContext {
-    use crate::engine::Permissions;
     use std::path::PathBuf;
 
     HostContext {

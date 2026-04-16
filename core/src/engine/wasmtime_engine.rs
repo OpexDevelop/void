@@ -1,4 +1,3 @@
-use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -147,7 +146,7 @@ impl PluginRuntime for WasmtimeRuntime {
                         None    => return,
                     };
                     let data    = mem.data(&caller);
-                    let topic   = match read_str(data, topic_ptr, topic_len)   { Some(t) => t, None => return };
+                    let topic   = match read_str(data, topic_ptr, topic_len)       { Some(t) => t, None => return };
                     let payload = match read_bytes(data, payload_ptr, payload_len) { Some(p) => p, None => return };
                     let _ = tx.send(Event { meta: EventMeta::new(&topic), payload });
                 },
@@ -165,8 +164,8 @@ impl PluginRuntime for WasmtimeRuntime {
                         None    => return -1,
                     };
                     let data = mem.data(&caller);
-                    let url  = match read_str(data, url_ptr, url_len)       { Some(u) => u, None => return -1 };
-                    let body = match read_bytes(data, body_ptr, body_len)   { Some(b) => b, None => return -1 };
+                    let url  = match read_str(data, url_ptr, url_len)     { Some(u) => u, None => return -1 };
+                    let body = match read_bytes(data, body_ptr, body_len) { Some(b) => b, None => return -1 };
                     tokio::spawn(async move {
                         let client = reqwest::Client::new();
                         match client

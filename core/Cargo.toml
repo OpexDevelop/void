@@ -4,9 +4,10 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default          = ["wasmtime-backend"]
-wasmtime-backend = ["dep:wasmtime", "dep:wasmtime-wasi"]
-wasmi-backend    = ["dep:wasmi"]
+default              = ["wasmtime-backend"]
+wasmtime-backend     = ["dep:wasmtime", "dep:wasmtime-wasi"]
+wasmi-backend        = ["dep:wasmi"]
+verify-signatures    = []
 
 [dependencies]
 tokio              = { version = "1",    features = ["full"] }
