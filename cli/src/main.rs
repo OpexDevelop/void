@@ -6,7 +6,8 @@ use tokio::sync::mpsc;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
-use void_core::event::{Event, EventMeta};
+use void_core::dlq::{DlqConfig, self};
+use void_core::event::{self, Event, EventMeta};
 use void_core::hotswap::HotSwapConfig;
 use void_core::manifest::PluginManifest;
 use void_core::supervisor::Supervisor;
@@ -17,11 +18,11 @@ use void_core::engine::wasmtime_engine::WasmtimeRuntime;
 #[cfg(all(feature = "wasmi-backend", not(feature = "wasmtime-backend")))]
 use void_core::engine::wasmi_engine::WasmiRuntime;
 
-const TOPIC_SYS_STARTUP:      &str = "SYS_STARTUP";
-const TOPIC_UI_SEND_MSG:      &str = "UI_SEND_MSG";
-const TOPIC_DB_READ_CMD:      &str = "DB_READ_CMD";
-const TOPIC_CRYPTO_DECRYPTED: &str = "CRYPTO_DECRYPTED";
-const TOPIC_DB_HISTORY_RESULT:&str = "DB_HISTORY_RESULT";
+const TOPIC_SYS_STARTUP:       &str = "SYS_STARTUP";
+const TOPIC_UI_SEND_MSG:       &str = "UI_SEND_MSG";
+const TOPIC_DB_READ_CMD:       &str = "DB_READ_CMD";
+const TOPIC_CRYPTO_DECRYPTED:  &str = "CRYPTO_DECRYPTED";
+const TOPIC_DB_HISTORY_RESULT: &str = "DB_HISTORY_RESULT";
 
 struct CliArgs {
     chat_id:       String,
@@ -87,15 +88,11 @@ async fn main() -> Result<()> {
     let runtime: Arc<dyn void_core::engine::PluginRuntime> =
         Arc::new(WasmiRuntime::new()?);
 
-    let (global_tx, global_rx) = mpsc::unbounded_channel::<Event>();
-    let (dlq_tx, mut dlq_rx)   = mpsc::unbounded_channel::<Event>();
+    let (global_tx, global_rx) = event::bus();
     let (host_tx, mut host_rx) = mpsc::unbounded_channel::<Event>();
 
-    tokio::spawn(async move {
-        while let Some(ev) = dlq_rx.recv().await {
-            tracing::warn!(topic = %ev.meta.topic, id = %ev.meta.id, "[DLQ]");
-        }
-    });
+    // персистентная DLQ — пишет в ./data/dlq.jsonl
+    let dlq_tx = dlq::spawn(DlqConfig::default());
 
     tokio::spawn(async move {
         while let Some(ev) = host_rx.recv().await {
@@ -155,15 +152,14 @@ async fn main() -> Result<()> {
         "chat_id": args.chat_id
     }))?;
 
-    let _ = global_tx.send(Event {
+    global_tx.send(Event {
         meta:    EventMeta::new(TOPIC_SYS_STARTUP),
         payload: startup_payload,
-    });
+    }).await?;
 
     info!("ready  |  chat: {}  |  /history  /quit  <message>", args.chat_id);
 
-    let stdin      = io::stdin();
-    let global_tx2 = global_tx.clone();
+    let stdin = io::stdin();
 
     for line in stdin.lock().lines() {
         let line    = line?;
@@ -173,16 +169,16 @@ async fn main() -> Result<()> {
         match trimmed {
             "/quit" => break,
             "/history" => {
-                let _ = global_tx2.send(Event {
+                global_tx.send(Event {
                     meta:    EventMeta::new(TOPIC_DB_READ_CMD),
                     payload: vec![],
-                });
+                }).await?;
             }
             msg => {
-                let _ = global_tx2.send(Event {
+                global_tx.send(Event {
                     meta:    EventMeta::new(TOPIC_UI_SEND_MSG),
                     payload: msg.as_bytes().to_vec(),
-                });
+                }).await?;
             }
         }
     }
@@ -196,13 +192,10 @@ fn print_history(payload: &[u8]) {
         Ok(arr) => {
             println!("\n── history ──");
             if let Some(messages) = arr.as_array() {
-                if messages.is_empty() {
-                    println!("  (empty)");
-                }
+                if messages.is_empty() { println!("  (empty)"); }
                 for msg in messages {
-                    let ts      = msg["ts"].as_u64().unwrap_or(0);
-                    let payload = msg["payload"].as_array();
-                    if let Some(bytes_arr) = payload {
+                    let ts = msg["ts"].as_u64().unwrap_or(0);
+                    if let Some(bytes_arr) = msg["payload"].as_array() {
                         let bytes: Vec<u8> = bytes_arr
                             .iter()
                             .filter_map(|v| v.as_u64().map(|n| n as u8))

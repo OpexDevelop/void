@@ -3,31 +3,33 @@ use std::time::Duration;
 use anyhow::Result;
 use futures_util::StreamExt;
 use tokio::sync::mpsc;
-use wasmtime::{Caller, Config, Engine, Instance, Linker, Module, ResourceLimiter, Store};
-use wasmtime_wasi::preview1::WasiP1Ctx;
-use wasmtime_wasi::{DirPerms, FilePerms, WasiCtxBuilder};
+use wasmtime::{
+    component::{bindgen, Component, Linker as ComponentLinker, Val},
+    Config, Engine, Store,
+};
+use wasmtime_wasi::{DirPerms, FilePerms, WasiCtxBuilder, WasiView};
+use wasmtime_wasi::preview2::WasiCtx;
 
-use crate::event::{Event, EventMeta};
+use crate::event::{BusTx, Event, EventMeta};
+use crate::network;
 use super::{HostContext, PluginInstance, PluginRuntime};
 
 const FUEL_LIMIT:   u64   = 50_000_000;
 const MEMORY_LIMIT: usize = 50 * 1024 * 1024;
 
-struct PluginLimiter { memory_limit: usize }
-
-impl ResourceLimiter for PluginLimiter {
-    fn memory_growing(&mut self, _cur: usize, desired: usize, _max: Option<usize>) -> Result<bool> {
-        Ok(desired <= self.memory_limit)
-    }
-    fn table_growing(&mut self, _cur: u32, _des: u32, _max: Option<u32>) -> Result<bool> {
-        Ok(true)
-    }
-}
+bindgen!({
+    path:  "wit/plugin.wit",
+    world: "plugin-world",
+    async: true,
+});
 
 struct HostState {
-    wasi:     WasiP1Ctx,
-    event_tx: mpsc::UnboundedSender<Event>,
-    limiter:  PluginLimiter,
+    wasi:     WasiCtx,
+    event_tx: BusTx,
+}
+
+impl WasiView for HostState {
+    fn ctx(&mut self) -> &mut WasiCtx { &mut self.wasi }
 }
 
 pub struct WasmtimeRuntime { engine: Engine }
@@ -35,240 +37,120 @@ pub struct WasmtimeRuntime { engine: Engine }
 impl WasmtimeRuntime {
     pub fn new() -> Result<Self> {
         let mut config = Config::new();
+        config.async_support(true);
         config.consume_fuel(true);
+        config.wasm_component_model(true);
         Ok(Self { engine: Engine::new(&config)? })
-    }
-}
-
-fn read_str(data: &[u8], ptr: i32, len: i32) -> Option<String> {
-    let s = ptr as usize;
-    let e = s.checked_add(len as usize)?;
-    if e > data.len() { return None; }
-    std::str::from_utf8(&data[s..e]).ok().map(|x| x.to_string())
-}
-
-fn read_bytes(data: &[u8], ptr: i32, len: i32) -> Option<Vec<u8>> {
-    let s = ptr as usize;
-    let e = s.checked_add(len as usize)?;
-    if e > data.len() { return None; }
-    Some(data[s..e].to_vec())
-}
-
-async fn sse_loop(url: String, tx: mpsc::UnboundedSender<Event>) {
-    tracing::info!(url = %url, "SSE stream starting");
-    loop {
-        let client = match reqwest::Client::builder()
-            .timeout(Duration::from_secs(300))
-            .build()
-        {
-            Ok(c)  => c,
-            Err(e) => {
-                tracing::error!(error = %e, "failed to build reqwest client");
-                return;
-            }
-        };
-
-        let response = match client
-            .get(&url)
-            .header("Accept", "text/event-stream")
-            .send()
-            .await
-        {
-            Ok(r)  => r,
-            Err(e) => {
-                tracing::warn!(error = %e, "SSE connect failed, retry in 5s");
-                tokio::time::sleep(Duration::from_secs(5)).await;
-                continue;
-            }
-        };
-
-        let mut stream = response.bytes_stream();
-        let mut buf    = String::new();
-
-        while let Some(chunk) = stream.next().await {
-            match chunk {
-                Ok(bytes) => {
-                    let text = match std::str::from_utf8(&bytes) {
-                        Ok(t)  => t,
-                        Err(_) => continue,
-                    };
-                    buf.push_str(text);
-
-                    while let Some(pos) = buf.find("\n\n") {
-                        let block = buf[..pos].to_string();
-                        buf = buf[pos + 2..].to_string();
-
-                        for line in block.lines() {
-                            if let Some(data) = line.strip_prefix("data: ") {
-                                if data.trim().is_empty() || data.trim() == "{}" {
-                                    continue;
-                                }
-                                let event = Event {
-                                    meta:    EventMeta::new("NET_RECEIVED"),
-                                    payload: data.as_bytes().to_vec(),
-                                };
-                                if tx.send(event).is_err() {
-                                    tracing::warn!("SSE: event bus closed");
-                                    return;
-                                }
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(error = %e, "SSE stream error, reconnecting");
-                    break;
-                }
-            }
-        }
-
-        tracing::info!("SSE stream ended, reconnecting in 3s");
-        tokio::time::sleep(Duration::from_secs(3)).await;
     }
 }
 
 impl PluginRuntime for WasmtimeRuntime {
     fn instantiate(&self, wasm_bytes: &[u8], ctx: HostContext) -> Result<Box<dyn PluginInstance>> {
-        let module = Module::new(&self.engine, wasm_bytes)?;
-        let mut linker: Linker<HostState> = Linker::new(&self.engine);
+        let component = Component::new(&self.engine, wasm_bytes)?;
 
-        wasmtime_wasi::preview1::add_to_linker_sync(&mut linker, |s: &mut HostState| &mut s.wasi)?;
+        let mut linker: ComponentLinker<HostState> = ComponentLinker::new(&self.engine);
+        wasmtime_wasi::preview2::command::add_to_linker(&mut linker)?;
 
+        // ── emit_event ────────────────────────────────────────────────────────
         {
             let tx = ctx.event_tx.clone();
-            linker.func_wrap(
-                "env", "emit_event",
-                move |mut caller: Caller<'_, HostState>,
-                      topic_ptr: i32, topic_len: i32,
-                      payload_ptr: i32, payload_len: i32| {
-                    let mem = match caller.get_export("memory").and_then(|e| e.into_memory()) {
-                        Some(m) => m,
-                        None    => return,
-                    };
-                    let data    = mem.data(&caller);
-                    let topic   = match read_str(data, topic_ptr, topic_len)       { Some(t) => t, None => return };
-                    let payload = match read_bytes(data, payload_ptr, payload_len) { Some(p) => p, None => return };
-                    let _ = tx.send(Event { meta: EventMeta::new(&topic), payload });
+            linker.func_wrap_async(
+                "void:plugin/plugin-world",
+                "emit-event",
+                move |_store: wasmtime::StoreContextMut<'_, HostState>,
+                      (topic, payload): (String, Vec<u8>)| {
+                    let tx = tx.clone();
+                    Box::new(async move {
+                        let _ = tx.send(Event {
+                            meta:    EventMeta::new(topic),
+                            payload,
+                        }).await;
+                        Ok(())
+                    })
                 },
             )?;
         }
 
+        // ── network (только если разрешено) ───────────────────────────────────
         if ctx.permissions.network {
-            linker.func_wrap(
-                "env", "host_http_post",
-                |mut caller: Caller<'_, HostState>,
-                 url_ptr: i32, url_len: i32,
-                 body_ptr: i32, body_len: i32| -> i32 {
-                    let mem = match caller.get_export("memory").and_then(|e| e.into_memory()) {
-                        Some(m) => m,
-                        None    => return -1,
-                    };
-                    let data = mem.data(&caller);
-                    let url  = match read_str(data, url_ptr, url_len)     { Some(u) => u, None => return -1 };
-                    let body = match read_bytes(data, body_ptr, body_len) { Some(b) => b, None => return -1 };
-                    tokio::spawn(async move {
-                        let client = reqwest::Client::new();
-                        match client
-                            .post(&url)
-                            .header("Content-Type", "text/plain; charset=utf-8")
-                            .body(body)
-                            .send()
-                            .await
-                        {
-                            Ok(r)  => tracing::info!(url = %url, status = %r.status(), "http_post ok"),
-                            Err(e) => tracing::error!(url = %url, error = %e, "http_post failed"),
-                        }
-                    });
-                    0
+            linker.func_wrap_async(
+                "void:plugin/network-plugin-world",
+                "host-http-post",
+                |_store: wasmtime::StoreContextMut<'_, HostState>,
+                 (url, body): (String, Vec<u8>)| {
+                    Box::new(async move {
+                        network::http_post(url, body).await;
+                        Ok((0i32,))
+                    })
                 },
             )?;
 
             {
                 let tx = ctx.event_tx.clone();
-                linker.func_wrap(
-                    "env", "host_sse_start",
-                    move |mut caller: Caller<'_, HostState>,
-                          url_ptr: i32, url_len: i32| -> i32 {
-                        let mem = match caller.get_export("memory").and_then(|e| e.into_memory()) {
-                            Some(m) => m,
-                            None    => return -1,
-                        };
-                        let data = mem.data(&caller);
-                        let url  = match read_str(data, url_ptr, url_len) { Some(u) => u, None => return -1 };
-                        let tx2  = tx.clone();
-                        tokio::spawn(async move { sse_loop(url, tx2).await; });
-                        0
+                linker.func_wrap_async(
+                    "void:plugin/network-plugin-world",
+                    "host-sse-start",
+                    move |_store: wasmtime::StoreContextMut<'_, HostState>,
+                          (url,): (String,)| {
+                        let tx = tx.clone();
+                        Box::new(async move {
+                            tokio::spawn(network::sse_loop(url, tx));
+                            Ok((0i32,))
+                        })
                     },
                 )?;
             }
         }
 
-        let mut ctx_builder = WasiCtxBuilder::new();
-        ctx_builder.inherit_stdio();
+        // ── WASI ──────────────────────────────────────────────────────────────
+        let mut builder = WasiCtxBuilder::new();
+        builder.inherit_stdio();
 
         if ctx.permissions.filesystem {
             for dir in &ctx.permissions.allowed_dirs {
                 std::fs::create_dir_all(dir)?;
-                ctx_builder.preopened_dir(dir, ".", DirPerms::all(), FilePerms::all())?;
+                builder.preopened_dir(dir, ".", DirPerms::all(), FilePerms::all())?;
             }
         }
 
         let host_state = HostState {
-            wasi:     ctx_builder.build_p1(),
+            wasi:     builder.build(),
             event_tx: ctx.event_tx,
-            limiter:  PluginLimiter { memory_limit: MEMORY_LIMIT },
         };
 
         let mut store = Store::new(&self.engine, host_state);
         store.set_fuel(FUEL_LIMIT)?;
-        store.limiter(|s| &mut s.limiter);
 
-        let instance = linker.instantiate(&mut store, &module)?;
-        Ok(Box::new(WasmtimeInstance { store, instance, initial_fuel: FUEL_LIMIT }))
+        let (plugin, _) = PluginWorld::instantiate(&mut store, &component, &linker)?;
+
+        Ok(Box::new(WasmtimeInstance { store, plugin, initial_fuel: FUEL_LIMIT }))
     }
 }
 
 pub struct WasmtimeInstance {
     store:        Store<HostState>,
-    instance:     Instance,
+    plugin:       PluginWorld,
     initial_fuel: u64,
 }
 
 impl PluginInstance for WasmtimeInstance {
     fn handle_event(&mut self, meta_json: &[u8], payload: &[u8]) -> Result<(), String> {
-        let alloc = self.instance
-            .get_typed_func::<i32, i32>(&mut self.store, "alloc")
+        let meta: crate::event::EventMeta = serde_json::from_slice(meta_json)
             .map_err(|e| e.to_string())?;
 
-        let meta_ptr    = alloc.call(&mut self.store, meta_json.len() as i32).map_err(|e| e.to_string())?;
-        let payload_ptr = alloc.call(&mut self.store, payload.len().max(1) as i32).map_err(|e| e.to_string())?;
+        let wit_meta = EventMeta {
+            id:        meta.id,
+            topic:     meta.topic,
+            version:   meta.version,
+            timestamp: meta.timestamp,
+        };
 
-        let memory = self.instance
-            .get_memory(&mut self.store, "memory")
-            .ok_or_else(|| "no memory export".to_string())?;
-
-        memory.write(&mut self.store, meta_ptr as usize,    meta_json).map_err(|e| e.to_string())?;
-        memory.write(&mut self.store, payload_ptr as usize, payload).map_err(|e| e.to_string())?;
-
-        let handle = self.instance
-            .get_typed_func::<(i32, i32, i32, i32), i32>(&mut self.store, "handle_event")
+        // async handle_event через block_on — мы в spawn_blocking потоке
+        let result = tokio::runtime::Handle::current()
+            .block_on(self.plugin.call_handle_event(&mut self.store, &wit_meta, payload))
             .map_err(|e| e.to_string())?;
 
-        let result = handle
-            .call(&mut self.store, (
-                meta_ptr,    meta_json.len() as i32,
-                payload_ptr, payload.len()   as i32,
-            ))
-            .map_err(|e| e.to_string())?;
-
-        if let Ok(dealloc) = self.instance
-            .get_typed_func::<(i32, i32), ()>(&mut self.store, "dealloc")
-        {
-            let _ = dealloc.call(&mut self.store, (meta_ptr,    meta_json.len() as i32));
-            let _ = dealloc.call(&mut self.store, (payload_ptr, payload.len()   as i32));
-        }
-
-        if result == 0 { Ok(()) } else { Err(format!("plugin error code {result}")) }
+        if result == 0 { Ok(()) } else { Err(format!("plugin error {result}")) }
     }
 
     fn fuel_consumed(&self) -> u64 {

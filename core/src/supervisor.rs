@@ -8,11 +8,11 @@ use tokio::sync::mpsc;
 use tracing::info;
 
 use crate::engine::PluginRuntime;
-use crate::event::Event;
+use crate::event::{BusRx, BusTx, Event};
 use crate::hotswap::{HotSwapConfig, HotSwapper};
 use crate::manifest::PluginManifest;
 use crate::registry::Registry;
-use crate::router::{Router, RouterTable, Sender};
+use crate::router::{Router, Sender};
 use crate::worker;
 
 struct LoadedPlugin {
@@ -22,7 +22,7 @@ struct LoadedPlugin {
 
 pub struct Supervisor {
     runtime:   Arc<dyn PluginRuntime>,
-    global_tx: mpsc::UnboundedSender<Event>,
+    global_tx: BusTx,
     dlq_tx:    mpsc::UnboundedSender<Event>,
     registry:  Registry,
     router:    Router,
@@ -32,7 +32,7 @@ pub struct Supervisor {
 impl Supervisor {
     pub fn new(
         runtime:   Arc<dyn PluginRuntime>,
-        global_tx: mpsc::UnboundedSender<Event>,
+        global_tx: BusTx,
         dlq_tx:    mpsc::UnboundedSender<Event>,
     ) -> Self {
         let router = Router::new(dlq_tx.clone());
@@ -83,7 +83,7 @@ impl Supervisor {
         self.router.register("__host__", topics, Sender::Unbounded(tx));
     }
 
-    pub fn start_routing(&self, mut global_rx: mpsc::UnboundedReceiver<Event>) {
+    pub fn start_routing(&self, mut global_rx: BusRx) {
         let table = self.router.clone_table();
 
         tokio::spawn(async move {
@@ -95,7 +95,6 @@ impl Supervisor {
 
     pub fn start_hot_swap(&self, config: HotSwapConfig) -> Result<RecommendedWatcher> {
         let mut swapper = HotSwapper::new(config);
-
         for (id, entry) in &self.plugins {
             swapper.register(
                 id,
@@ -103,7 +102,6 @@ impl Supervisor {
                 entry.tx.clone(),
             );
         }
-
         swapper.start()
     }
 }

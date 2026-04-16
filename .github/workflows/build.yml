@@ -63,8 +63,7 @@ jobs:
             ~/.cargo/git
             target
           key: android-aarch64-cli-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            android-aarch64-cli-
+          restore-keys: android-aarch64-cli-
 
       - name: Setup Android NDK
         id: setup-ndk
@@ -100,7 +99,10 @@ jobs:
       - name: Install Rust + wasm32-wasip1
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: wasm32-wasip1
+          targets: wasm32-wasip2
+
+      - name: Install wasm-tools
+        run: cargo install wasm-tools --locked
 
       - name: Cache cargo (wasm)
         uses: actions/cache@v4
@@ -110,26 +112,34 @@ jobs:
             ~/.cargo/git
             target
           key: wasm-plugins-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            wasm-plugins-
+          restore-keys: wasm-plugins-
 
-      - name: Build plugin-crypto
-        run: cargo build --release --target wasm32-wasip1 -p plugin-crypto
+      - name: Build plugins
+        run: |
+          cargo build --release --target wasm32-wasip2 -p plugin-crypto
+          cargo build --release --target wasm32-wasip2 -p plugin-ntfy
+          cargo build --release --target wasm32-wasip2 -p plugin-storage
 
-      - name: Build plugin-ntfy
-        run: cargo build --release --target wasm32-wasip1 -p plugin-ntfy
-
-      - name: Build plugin-storage
-        run: cargo build --release --target wasm32-wasip1 -p plugin-storage
+      - name: Convert to components
+        run: |
+          wasm-tools component new \
+            target/wasm32-wasip2/release/plugin_crypto.wasm \
+            -o target/wasm32-wasip2/release/plugin_crypto.component.wasm
+          wasm-tools component new \
+            target/wasm32-wasip2/release/plugin_ntfy.wasm \
+            -o target/wasm32-wasip2/release/plugin_ntfy.component.wasm
+          wasm-tools component new \
+            target/wasm32-wasip2/release/plugin_storage.wasm \
+            -o target/wasm32-wasip2/release/plugin_storage.component.wasm
 
       - name: Upload wasm artifacts
         uses: actions/upload-artifact@v4
         with:
           name: wasm-plugins
           path: |
-            target/wasm32-wasip1/release/plugin_crypto.wasm
-            target/wasm32-wasip1/release/plugin_ntfy.wasm
-            target/wasm32-wasip1/release/plugin_storage.wasm
+            target/wasm32-wasip2/release/plugin_crypto.component.wasm
+            target/wasm32-wasip2/release/plugin_ntfy.component.wasm
+            target/wasm32-wasip2/release/plugin_storage.component.wasm
 
   bundle:
     name: Bundle (Android + Wasm plugins)

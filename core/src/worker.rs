@@ -5,7 +5,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 use crate::engine::{HostContext, PluginInstance, PluginRuntime, Permissions};
-use crate::event::{Event, SYS_SHUTDOWN};
+use crate::event::{BusTx, Event, SYS_SHUTDOWN};
 use crate::manifest::{PluginManifest, RestartPolicy};
 
 fn backoff(attempt: u32) -> Duration {
@@ -20,11 +20,13 @@ pub fn spawn(
     bytes:     Vec<u8>,
     manifest:  PluginManifest,
     rx:        mpsc::Receiver<Event>,
-    global_tx: mpsc::UnboundedSender<Event>,
+    global_tx: BusTx,
     dlq_tx:    mpsc::UnboundedSender<Event>,
 ) {
-    tokio::spawn(async move {
-        run(runtime, bytes, manifest, rx, global_tx, dlq_tx).await;
+    tokio::task::spawn_blocking(move || {
+        tokio::runtime::Handle::current().block_on(async move {
+            run(runtime, bytes, manifest, rx, global_tx, dlq_tx).await;
+        });
     });
 }
 
@@ -33,24 +35,19 @@ async fn run(
     bytes:     Vec<u8>,
     manifest:  PluginManifest,
     mut rx:    mpsc::Receiver<Event>,
-    global_tx: mpsc::UnboundedSender<Event>,
+    global_tx: BusTx,
     dlq_tx:    mpsc::UnboundedSender<Event>,
 ) {
     let id = manifest.plugin.id.clone();
 
     let make_instance = || {
-        let rt  = Arc::clone(&runtime);
-        let b   = bytes.clone();
         let ctx = build_ctx(&manifest, global_tx.clone());
-        tokio::task::block_in_place(|| rt.instantiate(&b, ctx))
+        runtime.instantiate(&bytes, ctx)
     };
 
     let mut instance: Box<dyn PluginInstance> = match make_instance() {
         Ok(i)  => i,
-        Err(e) => {
-            error!(plugin = %id, error = %e, "instantiation failed");
-            return;
-        }
+        Err(e) => { error!(plugin = %id, error = %e, "instantiation failed"); return; }
     };
 
     let mut retries = 0u32;
@@ -71,10 +68,7 @@ async fn run(
         };
 
         let fuel_before = instance.fuel_consumed();
-
-        let result = tokio::task::block_in_place(|| {
-            instance.handle_event(&meta_json, &event.payload)
-        });
+        let result      = instance.handle_event(&meta_json, &event.payload);
 
         match result {
             Ok(_) => {
@@ -98,10 +92,7 @@ async fn run(
                     tokio::time::sleep(delay).await;
                     match make_instance() {
                         Ok(new) => { instance = new; }
-                        Err(e2) => {
-                            error!(plugin = %id, error = %e2, "restart failed");
-                            return;
-                        }
+                        Err(e2) => { error!(plugin = %id, error = %e2, "restart failed"); return; }
                     }
                 } else {
                     error!(plugin = %id, "max retries exceeded");
@@ -114,9 +105,8 @@ async fn run(
     info!(plugin = %id, "worker stopped");
 }
 
-fn build_ctx(manifest: &PluginManifest, event_tx: mpsc::UnboundedSender<Event>) -> HostContext {
+fn build_ctx(manifest: &PluginManifest, event_tx: BusTx) -> HostContext {
     use std::path::PathBuf;
-
     HostContext {
         event_tx,
         permissions: Permissions {

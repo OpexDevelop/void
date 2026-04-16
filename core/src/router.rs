@@ -1,4 +1,5 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex};
 
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
@@ -24,14 +25,52 @@ impl Sender {
     }
 }
 
+// Кольцевой буфер уже обработанных ID — без роста памяти
+#[derive(Clone)]
+struct SeenIds {
+    ids:      Arc<Mutex<(HashSet<String>, std::collections::VecDeque<String>)>>,
+    capacity: usize,
+}
+
+impl SeenIds {
+    fn new(capacity: usize) -> Self {
+        Self {
+            ids: Arc::new(Mutex::new((HashSet::new(), std::collections::VecDeque::new()))),
+            capacity,
+        }
+    }
+
+    // true = уже видели (дубликат)
+    fn check_and_insert(&self, id: &str) -> bool {
+        let mut guard = self.ids.lock().unwrap();
+        let (set, queue) = &mut *guard;
+        if set.contains(id) {
+            return true;
+        }
+        if queue.len() >= self.capacity {
+            if let Some(old) = queue.pop_front() {
+                set.remove(&old);
+            }
+        }
+        set.insert(id.to_string());
+        queue.push_back(id.to_string());
+        false
+    }
+}
+
 pub struct Router {
-    table:  HashMap<String, Vec<(String, Sender)>>,
-    dlq_tx: mpsc::UnboundedSender<Event>,
+    table:    HashMap<String, Vec<(String, Sender)>>,
+    dlq_tx:   mpsc::UnboundedSender<Event>,
+    seen_ids: SeenIds,
 }
 
 impl Router {
     pub fn new(dlq_tx: mpsc::UnboundedSender<Event>) -> Self {
-        Self { table: HashMap::new(), dlq_tx }
+        Self {
+            table:    HashMap::new(),
+            dlq_tx,
+            seen_ids: SeenIds::new(10_000),
+        }
     }
 
     pub fn register(&mut self, id: &str, topics: &[String], tx: Sender) {
@@ -51,6 +90,11 @@ impl Router {
     }
 
     pub fn route(&self, event: &Event) {
+        if self.seen_ids.check_and_insert(&event.meta.id) {
+            debug!(id = %event.meta.id, topic = %event.meta.topic, "duplicate event, skipping");
+            return;
+        }
+
         match self.table.get(&event.meta.topic) {
             None => {
                 debug!(topic = %event.meta.topic, "no subscribers");
@@ -69,19 +113,26 @@ impl Router {
 
     pub fn clone_table(&self) -> RouterTable {
         RouterTable {
-            table:  self.table.clone(),
-            dlq_tx: self.dlq_tx.clone(),
+            table:    self.table.clone(),
+            dlq_tx:   self.dlq_tx.clone(),
+            seen_ids: self.seen_ids.clone(),
         }
     }
 }
 
 pub struct RouterTable {
-    table:  HashMap<String, Vec<(String, Sender)>>,
-    dlq_tx: mpsc::UnboundedSender<Event>,
+    table:    HashMap<String, Vec<(String, Sender)>>,
+    dlq_tx:   mpsc::UnboundedSender<Event>,
+    seen_ids: SeenIds,
 }
 
 impl RouterTable {
     pub fn route(&self, event: &Event) {
+        if self.seen_ids.check_and_insert(&event.meta.id) {
+            debug!(id = %event.meta.id, topic = %event.meta.topic, "duplicate, skipping");
+            return;
+        }
+
         match self.table.get(&event.meta.topic) {
             None => {
                 debug!(topic = %event.meta.topic, "no subscribers");

@@ -1,7 +1,9 @@
+pub mod dlq;
 pub mod engine;
 pub mod event;
 pub mod hotswap;
 pub mod manifest;
+pub mod network;
 pub mod registry;
 pub mod router;
 pub mod signing;

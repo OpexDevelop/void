@@ -1,8 +1,7 @@
 use anyhow::Result;
 use std::path::PathBuf;
-use tokio::sync::mpsc;
 
-use crate::event::Event;
+use crate::event::BusTx;
 
 #[cfg(feature = "wasmtime-backend")]
 pub mod wasmtime_engine;
@@ -18,7 +17,7 @@ pub struct Permissions {
 }
 
 pub struct HostContext {
-    pub event_tx:    mpsc::UnboundedSender<Event>,
+    pub event_tx:    BusTx,
     pub permissions: Permissions,
 }
 

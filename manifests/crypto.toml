@@ -3,7 +3,7 @@ id        = "crypto"
 version   = "1.0.0"
 sha256    = "0000000000000000000000000000000000000000000000000000000000000000"
 signature = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-wasm_path = "target/wasm32-wasip1/release/plugin_crypto.wasm"
+wasm_path = "target/wasm32-wasip2/release/plugin_crypto.component.wasm"
 
 [events]
 subscriptions  = ["UI_SEND_MSG", "NET_RECEIVED_MSG"]

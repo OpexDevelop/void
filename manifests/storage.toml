@@ -3,7 +3,7 @@ id        = "storage"
 version   = "1.0.0"
 sha256    = "0000000000000000000000000000000000000000000000000000000000000000"
 signature = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-wasm_path = "target/wasm32-wasip1/release/plugin_storage.wasm"
+wasm_path = "target/wasm32-wasip2/release/plugin_storage.component.wasm"
 
 [events]
 subscriptions  = ["UI_SEND_MSG", "CRYPTO_DECRYPTED", "DB_READ_CMD"]
