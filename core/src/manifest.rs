@@ -29,7 +29,8 @@ pub struct SupervisorConfig {
     pub max_retries:    u32,
 }
 
-// BUG FIX #1: было `lowercase` → "onfailure", манифест пишет "on_failure"
+// FIX: было rename_all = "lowercase"  →  "onfailure" (не совпадало с "on_failure")
+//      исправлено на snake_case        →  "on_failure" ✓
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum RestartPolicy {

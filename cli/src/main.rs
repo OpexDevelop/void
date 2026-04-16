@@ -13,21 +13,13 @@ use core::supervisor::Supervisor;
 #[cfg(feature = "wasmtime-backend")]
 use core::engine::wasmtime_engine::WasmtimeRuntime;
 
-#[cfg(feature = "wasmi-backend")]
+#[cfg(all(feature = "wasmi-backend", not(feature = "wasmtime-backend")))]
 use core::engine::wasmi_engine::WasmiRuntime;
 
-/// Парсит аргументы командной строки.
-/// Использование:
-///   void [--chat <chat_id>] [--manifests <dir>]
-///
-/// Примеры:
-///   void --chat my-secret-room
-///   void --chat team-alpha --manifests ./conf/manifests
 struct CliArgs {
-    /// Идентификатор ntfy-топика (канала чата).
-    /// Плагин ntfy подставит его в URL: https://ntfy.sh/<chat_id>
+    /// ntfy topic — передаётся в plugin-ntfy через SYS_STARTUP payload
     chat_id:       String,
-    /// Директория с манифестами плагинов (по умолчанию "manifests")
+    /// директория с манифестами (по умолчанию "manifests")
     manifests_dir: String,
 }
 
@@ -36,43 +28,36 @@ impl CliArgs {
         let args: Vec<String> = std::env::args().skip(1).collect();
         let mut chat_id       = String::from("wasm-messenger");
         let mut manifests_dir = String::from("manifests");
+        let mut i = 0usize;
 
-        let mut i = 0;
         while i < args.len() {
             match args[i].as_str() {
                 "--chat" => {
                     i += 1;
-                    if let Some(v) = args.get(i) {
-                        chat_id = v.clone();
-                    } else {
-                        eprintln!("ERROR: --chat requires a value");
-                        std::process::exit(1);
-                    }
+                    chat_id = args.get(i)
+                        .cloned()
+                        .unwrap_or_else(|| { eprintln!("--chat requires a value"); std::process::exit(1); });
                 }
                 "--manifests" => {
                     i += 1;
-                    if let Some(v) = args.get(i) {
-                        manifests_dir = v.clone();
-                    } else {
-                        eprintln!("ERROR: --manifests requires a value");
-                        std::process::exit(1);
-                    }
+                    manifests_dir = args.get(i)
+                        .cloned()
+                        .unwrap_or_else(|| { eprintln!("--manifests requires a value"); std::process::exit(1); });
                 }
                 "--help" | "-h" => {
-                    println!("Usage: void [--chat <id>] [--manifests <dir>]");
+                    println!("void [--chat <id>] [--manifests <dir>]");
                     println!();
-                    println!("  --chat <id>        ntfy topic / chat room ID (default: wasm-messenger)");
-                    println!("  --manifests <dir>  path to plugin manifests   (default: manifests)");
+                    println!("  --chat <id>        ntfy topic / chat room  (default: wasm-messenger)");
+                    println!("  --manifests <dir>  manifest directory       (default: manifests)");
                     println!();
-                    println!("Commands inside the REPL:");
-                    println!("  /history   — show stored message history");
-                    println!("  /quit      — exit");
-                    println!("  <text>     — send a message");
+                    println!("REPL commands:");
+                    println!("  /history   show stored history");
+                    println!("  /quit      exit");
+                    println!("  <text>     send message");
                     std::process::exit(0);
                 }
                 other => {
-                    eprintln!("ERROR: unknown argument `{other}`");
-                    eprintln!("Run `void --help` for usage.");
+                    eprintln!("unknown argument `{other}`, try --help");
                     std::process::exit(1);
                 }
             }
@@ -88,13 +73,13 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new("cli=debug,core=debug,warn")),
+                .unwrap_or_else(|_| EnvFilter::new("void=debug,core=debug,warn")),
         )
         .init();
 
     let args = CliArgs::parse();
 
-    info!(chat_id = %args.chat_id, "Wasm Plugin Host starting");
+    info!(chat = %args.chat_id, "void starting");
 
     // ── runtime ───────────────────────────────────────────────────────────
     #[cfg(feature = "wasmtime-backend")]
@@ -133,21 +118,20 @@ async fn main() -> Result<()> {
                 match std::fs::read(&wasm_path) {
                     Ok(bytes) => {
                         if let Err(e) = supervisor.load_plugin(manifest, bytes).await {
-                            error!(manifest = %path, error = %e, "Failed to load plugin");
+                            error!(manifest = %path, error = %e, "failed to load plugin");
                         }
                     }
-                    Err(e) => error!(wasm = %wasm_path, error = %e, "Failed to read wasm"),
+                    Err(e) => error!(wasm = %wasm_path, error = %e, "failed to read wasm"),
                 }
             }
-            Err(e) => error!(manifest = %path, error = %e, "Failed to parse manifest"),
+            Err(e) => error!(manifest = %path, error = %e, "failed to parse manifest"),
         }
     }
 
     supervisor.start_routing(global_rx);
     let _watcher = supervisor.start_hot_swap_watcher().ok();
 
-    // ── SYS_STARTUP несёт chat_id в payload ───────────────────────────────
-    // plugin-ntfy читает его и строит URL динамически
+    // ── SYS_STARTUP: кладём chat_id в payload → plugin-ntfy прочитает ─────
     let startup_payload = serde_json::to_vec(&serde_json::json!({
         "chat_id": args.chat_id
     }))?;
@@ -157,12 +141,9 @@ async fn main() -> Result<()> {
         payload: startup_payload,
     });
 
-    // ── REPL ──────────────────────────────────────────────────────────────
-    info!(
-        "Ready. Chat: {}  |  Commands: /history | /quit | <message>",
-        args.chat_id
-    );
+    info!("ready  |  chat: {}  |  /history  /quit  <message>", args.chat_id);
 
+    // ── REPL ──────────────────────────────────────────────────────────────
     let stdin      = io::stdin();
     let global_tx2 = global_tx.clone();
 
@@ -188,6 +169,6 @@ async fn main() -> Result<()> {
         }
     }
 
-    info!("Shutting down");
+    info!("shutting down");
     Ok(())
 }

@@ -11,65 +11,97 @@ env:
   RUST_LOG: warn
 
 jobs:
-  # ─────────────────────────────────────────────
-  #  1. Core — матрица платформ
-  # ─────────────────────────────────────────────
-  build-core:
-    name: Build core (${{ matrix.name }})
+  # ───────────────────────────────────────────────────────────
+  #  1. Lint — запускается первым, остальные зависят от него
+  #     Отдельный cache-ключ чтобы не гоняться с build-jobs
+  # ───────────────────────────────────────────────────────────
+  lint:
+    name: Clippy + fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      # Для lint НЕ кэшируем target/ — именно это вызывало гонку:
+      # build-jobs и lint писали в один cache одновременно.
+      # Только registry (исходники зависимостей) — он read-only во время lint.
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: lint-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      # Проверяем формат всех крейтов воркспейса
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      # Clippy: lib-ядро + CLI-бинарь (плагины — wasm, на хосте не собираются)
+      - name: Clippy core
+        run: cargo clippy -p core -- -D warnings
+
+      - name: Clippy cli
+        run: cargo clippy -p cli -- -D warnings
+
+  # ───────────────────────────────────────────────────────────
+  #  2. Хост-бинарь — матрица платформ
+  # ───────────────────────────────────────────────────────────
+  build-cli:
+    name: Build void (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
+    needs: lint                        # не тратим минуты если код не отформатирован
     strategy:
-      fail-fast: false          # не останавливать всё если одна платформа упала
+      fail-fast: false
       matrix:
         include:
-          # ── Linux x86_64 ───────────────────────
+          # ── Linux x86_64 ──────────────────────────────────
           - name: Linux x86_64
             os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            binary: core
+            binary: void
             run_tests: true
 
-          # ── Linux arm64 ────────────────────────
-          # Нативный arm64-раннер GitHub (бесплатно для публичных репо)
+          # ── Linux arm64 ───────────────────────────────────
           - name: Linux arm64
             os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
-            binary: core
+            binary: void
             run_tests: true
 
-          # ── macOS M1 (arm64) ───────────────────
-          # macos-latest = macos-14 = M1-раннер
+          # ── macOS arm64 (M1) ──────────────────────────────
           - name: macOS arm64 (M1)
             os: macos-latest
             target: aarch64-apple-darwin
-            binary: core
+            binary: void
             run_tests: true
 
-          # ── Windows x86_64 ─────────────────────
+          # ── Windows x86_64 ────────────────────────────────
           - name: Windows x86_64
             os: windows-latest
             target: x86_64-pc-windows-msvc
-            binary: core.exe
+            binary: void.exe
             run_tests: true
 
-          # ── Android aarch64 (Termux) ───────────
-          # Собирается под aarch64-linux-android API 24+
-          # На Termux: скопировать бинарь и chmod +x
+          # ── Android aarch64 (Termux) ──────────────────────
           - name: Android aarch64 (Termux)
             os: ubuntu-latest
             target: aarch64-linux-android
-            binary: core
-            run_tests: false    # нельзя запустить на хосте
+            binary: void
+            run_tests: false
 
     steps:
       - uses: actions/checkout@v4
 
-      # Устанавливаем Rust + нужный таргет
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
-      # Кэш cargo — ключ включает target, чтобы платформы не мешали друг другу
+      # cache key включает target-тройку — платформы не мешают друг другу
       - name: Cache cargo
         uses: actions/cache@v4
         with:
@@ -77,22 +109,24 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-${{ matrix.target }}-core-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-${{ matrix.target }}-cli-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.target }}-cli-
 
-      # ── Android: NDK + cargo-ndk ──────────────
+      # ── Android: NDK ──────────────────────────────────────
       - name: Setup Android NDK
         if: matrix.target == 'aarch64-linux-android'
         id: setup-ndk
         uses: nttld/setup-ndk@v1
         with:
-          ndk-version: r27c      # последний LTS-релиз NDK
+          ndk-version: r27c
           add-to-path: false
 
       - name: Install cargo-ndk
         if: matrix.target == 'aarch64-linux-android'
-        run: cargo install cargo-ndk
+        run: cargo install cargo-ndk --locked
 
-      # ── Сборка: Android ───────────────────────
+      # ── Сборка Android ────────────────────────────────────
       - name: Build release (Android)
         if: matrix.target == 'aarch64-linux-android'
         env:
@@ -101,35 +135,42 @@ jobs:
           cargo ndk \
             --target aarch64-linux-android \
             --platform 24 \
-            -- build --release -p core
+            -- build --release -p cli
 
-      # ── Сборка: все остальные платформы ────────
+      # ── Сборка остальных платформ ─────────────────────────
       - name: Build release
         if: matrix.target != 'aarch64-linux-android'
-        run: cargo build --release --target ${{ matrix.target }} -p core
+        run: cargo build --release --target ${{ matrix.target }} -p cli
 
-      # ── Тесты (только нативные платформы) ──────
-      - name: Run tests
+      # ── Тесты core (только нативные платформы) ────────────
+      - name: Run tests (core)
         if: matrix.run_tests
         run: cargo test --target ${{ matrix.target }} -p core
 
-      # ── Загрузка артефакта ─────────────────────
-      - name: Upload core binary
+      # ── Тесты cli ─────────────────────────────────────────
+      - name: Run tests (cli)
+        if: matrix.run_tests
+        run: cargo test --target ${{ matrix.target }} -p cli
+
+      # ── Артефакт ──────────────────────────────────────────
+      - name: Upload void binary
         uses: actions/upload-artifact@v4
         with:
-          name: core-${{ matrix.target }}
+          name: void-${{ matrix.target }}
           path: target/${{ matrix.target }}/release/${{ matrix.binary }}
 
-  # ─────────────────────────────────────────────
-  #  2. Wasm-плагины — без изменений (wasm портабелен)
-  # ─────────────────────────────────────────────
+  # ───────────────────────────────────────────────────────────
+  #  3. Wasm-плагины
+  #     Wasm портабелен — собирать один раз на ubuntu достаточно
+  # ───────────────────────────────────────────────────────────
   build-plugins:
     name: Build Wasm plugins
     runs-on: ubuntu-latest
+    needs: lint
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust + wasm32-wasip1 target
+      - name: Install Rust + wasm32-wasip1
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-wasip1
@@ -141,7 +182,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-wasm-${{ hashFiles('**/Cargo.lock') }}
+          key: wasm-plugins-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            wasm-plugins-
 
       - name: Build plugin-crypto
         run: cargo build --release --target wasm32-wasip1 -p plugin-crypto
@@ -161,18 +204,39 @@ jobs:
             target/wasm32-wasip1/release/plugin_ntfy.wasm
             target/wasm32-wasip1/release/plugin_storage.wasm
 
-  # ─────────────────────────────────────────────
-  #  3. Lint — без изменений
-  # ─────────────────────────────────────────────
-  lint:
-    name: Clippy + fmt
+  # ───────────────────────────────────────────────────────────
+  #  4. Bundle — собирает финальный релизный архив
+  #     Запускается только когда всё выше зелёное
+  # ───────────────────────────────────────────────────────────
+  bundle:
+    name: Bundle release (Linux x86_64)
     runs-on: ubuntu-latest
+    needs: [build-cli, build-plugins]
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Download void binary
+        uses: actions/download-artifact@v4
         with:
-          components: clippy, rustfmt
+          name: void-x86_64-unknown-linux-gnu
+          path: dist/
 
-      - run: cargo fmt --all -- --check
-      - run: cargo clippy -p core -- -D warnings
+      - name: Download wasm plugins
+        uses: actions/download-artifact@v4
+        with:
+          name: wasm-plugins
+          path: dist/
+
+      - name: Copy manifests and keys
+        run: |
+          cp -r manifests dist/
+          cp -r keys      dist/
+
+      - name: Make binary executable
+        run: chmod +x dist/void
+
+      - name: Upload bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: void-bundle-linux-x86_64
+          path: dist/

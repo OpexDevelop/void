@@ -111,17 +111,16 @@ impl Supervisor {
                 let path_str = path.to_string_lossy().to_string();
                 for (id, wasm_path, plugin_tx) in &plugin_paths {
                     if *wasm_path == path_str {
-                        info!(plugin = %id, "Hot-swap detected, sending SYS_SHUTDOWN");
+                        info!(plugin = %id, "Hot-swap detected");
                         let shutdown = Event {
                             meta:    EventMeta::new(SYS_SHUTDOWN),
                             payload: vec![],
                         };
                         let _ = plugin_tx.try_send(shutdown);
                         tokio::time::sleep(Duration::from_millis(500)).await;
-
                         match std::fs::read(wasm_path) {
-                            Ok(_bytes) => info!(plugin = %id, "Hot-swap complete"),
-                            Err(e)     => error!(plugin = %id, error = %e, "Hot-swap read failed"),
+                            Ok(_)  => info!(plugin = %id, "Hot-swap complete"),
+                            Err(e) => error!(plugin = %id, error = %e, "Hot-swap failed"),
                         }
                     }
                 }
@@ -170,10 +169,12 @@ async fn plugin_worker_loop(
 ) {
     let id = manifest.plugin.id.clone();
 
-    // BUG FIX #2: instantiate вызывает wasmtime-wasi sync bridge, который
-    // внутри делает Handle::block_on — это паникует внутри async-задачи.
-    // block_in_place говорит планировщику "уберите другие задачи с этого потока"
-    // и позволяет block_on завершиться без panic.
+    // ┌─────────────────────────────────────────────────────────────────────┐
+    // │ FIX: wasmtime-wasi preview1 sync bridge вызывает Handle::block_on   │
+    // │ внутри async-задачи → panic.                                         │
+    // │ block_in_place сигнализирует планировщику "этот поток будет блокирован│
+    // │ — мигрируй другие задачи", что позволяет block_on работать без panic. │
+    // └─────────────────────────────────────────────────────────────────────┘
     let make_instance = || {
         let rt    = Arc::clone(&runtime);
         let bytes = wasm_bytes.clone();
@@ -186,7 +187,10 @@ async fn plugin_worker_loop(
 
     let mut instance: Box<dyn PluginInstance> = match make_instance() {
         Ok(i)  => i,
-        Err(e) => { error!(plugin = %id, error = %e, "instantiation failed"); return; }
+        Err(e) => {
+            error!(plugin = %id, error = %e, "instantiation failed");
+            return;
+        }
     };
 
     let mut retry_count = 0u32;
@@ -208,8 +212,8 @@ async fn plugin_worker_loop(
 
         let fuel_before = instance.fuel_consumed();
 
-        // BUG FIX #2 (продолжение): handle_event → wasm → WASI syscall (fs read/write)
-        // → sync bridge → block_on → panic без block_in_place
+        // FIX: любой WASI syscall (fs read/write/rename) идёт через sync bridge
+        // → без block_in_place storage падает на первом же обращении к диску
         let handle_result = tokio::task::block_in_place(|| {
             instance.handle_event(&meta_json, &event.payload)
         });
@@ -217,7 +221,12 @@ async fn plugin_worker_loop(
         match handle_result {
             Ok(_) => {
                 let fuel_used = instance.fuel_consumed().saturating_sub(fuel_before);
-                debug!(plugin = %id, topic = %event.meta.topic, fuel = fuel_used, "handled");
+                debug!(
+                    plugin = %id,
+                    topic  = %event.meta.topic,
+                    fuel   = fuel_used,
+                    "handled"
+                );
                 retry_count = 0;
             }
             Err(e) => {

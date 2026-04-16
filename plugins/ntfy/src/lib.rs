@@ -12,30 +12,44 @@ extern "C" {
     fn host_sse_start(url_ptr: *const u8, url_len: i32) -> i32;
 }
 
-// ── глобальное состояние (wasm однопоточен — static mut безопасен) ─────────
-static mut NTFY_BASE: [u8; 128] = [0u8; 128];
-static mut NTFY_BASE_LEN: usize  = 0;
+// ── глобальный URL ntfy (wasm однопоточен — static mut безопасен) ──────────
+//    Максимум 256 байт: "https://ntfy.sh/" (16) + chat_id (до 240)
+static mut NTFY_SEND: [u8; 256] = [0u8; 256];
+static mut NTFY_SEND_LEN: usize = 0;
 
-const DEFAULT_BASE: &str = "https://ntfy.sh/wasm-messenger";
+static mut NTFY_SSE: [u8; 260] = [0u8; 260];
+static mut NTFY_SSE_LEN: usize = 0;
 
-fn get_base() -> &'static str {
+const DEFAULT_CHAT: &str = "wasm-messenger";
+
+fn init_urls(chat_id: &str) {
+    let send = format!("https://ntfy.sh/{}", chat_id);
+    let sse  = format!("https://ntfy.sh/{}/sse", chat_id);
+
     unsafe {
-        let len = NTFY_BASE_LEN;
-        if len == 0 {
-            DEFAULT_BASE
-        } else {
-            std::str::from_utf8(&NTFY_BASE[..len]).unwrap_or(DEFAULT_BASE)
-        }
+        let sb = send.as_bytes();
+        let sl = sb.len().min(255);
+        NTFY_SEND[..sl].copy_from_slice(&sb[..sl]);
+        NTFY_SEND_LEN = sl;
+
+        let rb = sse.as_bytes();
+        let rl = rb.len().min(259);
+        NTFY_SSE[..rl].copy_from_slice(&rb[..rl]);
+        NTFY_SSE_LEN = rl;
     }
 }
 
-fn set_base(chat_id: &str) {
-    let url = format!("https://ntfy.sh/{}", chat_id);
-    let bytes = url.as_bytes();
-    let len   = bytes.len().min(127);
+fn send_url() -> &'static str {
     unsafe {
-        NTFY_BASE[..len].copy_from_slice(&bytes[..len]);
-        NTFY_BASE_LEN = len;
+        if NTFY_SEND_LEN == 0 { return concat!("https://ntfy.sh/", "wasm-messenger"); }
+        std::str::from_utf8(&NTFY_SEND[..NTFY_SEND_LEN]).unwrap_or(DEFAULT_CHAT)
+    }
+}
+
+fn sse_url() -> &'static str {
+    unsafe {
+        if NTFY_SSE_LEN == 0 { return concat!("https://ntfy.sh/", "wasm-messenger", "/sse"); }
+        std::str::from_utf8(&NTFY_SSE[..NTFY_SSE_LEN]).unwrap_or(DEFAULT_CHAT)
     }
 }
 
@@ -59,8 +73,7 @@ struct EventMeta {
     topic: String,
 }
 
-/// Payload SYS_STARTUP: `{"chat_id":"<id>"}` (опционально).
-/// Если поле отсутствует — используется DEFAULT_BASE.
+/// CLI кладёт в payload SYS_STARTUP: `{"chat_id":"<id>"}`
 #[derive(Deserialize, Default)]
 struct StartupPayload {
     #[serde(default)]
@@ -72,8 +85,12 @@ pub extern "C" fn handle_event(
     meta_ptr:    *const u8, meta_len:    i32,
     payload_ptr: *const u8, payload_len: i32,
 ) -> i32 {
-    let meta_slice    = unsafe { std::slice::from_raw_parts(meta_ptr,    meta_len    as usize) };
-    let payload_slice = unsafe { std::slice::from_raw_parts(payload_ptr, payload_len as usize) };
+    let meta_slice = unsafe {
+        std::slice::from_raw_parts(meta_ptr, meta_len as usize)
+    };
+    let payload_slice = unsafe {
+        std::slice::from_raw_parts(payload_ptr, payload_len as usize)
+    };
 
     let meta: EventMeta = match serde_json::from_slice(meta_slice) {
         Ok(m)  => m,
@@ -82,36 +99,36 @@ pub extern "C" fn handle_event(
 
     match meta.topic.as_str() {
         "SYS_STARTUP"      => on_startup(payload_slice),
-        "CRYPTO_ENCRYPTED" => send_over_network(payload_slice),
+        "CRYPTO_ENCRYPTED" => send_encrypted(payload_slice),
         "NET_RECEIVED"     => forward_to_bus(payload_slice),
         _                  => 0,
     }
 }
 
 fn on_startup(payload: &[u8]) -> i32 {
-    // Читаем chat_id из SYS_STARTUP payload (если есть)
-    if !payload.is_empty() {
-        if let Ok(p) = serde_json::from_slice::<StartupPayload>(payload) {
-            if let Some(id) = p.chat_id {
-                if !id.is_empty() {
-                    set_base(&id);
-                }
-            }
-        }
-    }
-    // Запускаем SSE-слушателя на /<base>/sse
-    let sse_url = format!("{}/sse", get_base());
-    unsafe {
-        host_sse_start(sse_url.as_ptr(), sse_url.len() as i32)
-    }
+    // Читаем chat_id из payload; если нет — берём дефолт
+    let chat_id = if !payload.is_empty() {
+        serde_json::from_slice::<StartupPayload>(payload)
+            .ok()
+            .and_then(|p| p.chat_id)
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| DEFAULT_CHAT.to_string())
+    } else {
+        DEFAULT_CHAT.to_string()
+    };
+
+    init_urls(&chat_id);
+
+    let url = sse_url();
+    unsafe { host_sse_start(url.as_ptr(), url.len() as i32) }
 }
 
-fn send_over_network(payload: &[u8]) -> i32 {
-    let send_url = get_base().to_string();
+fn send_encrypted(payload: &[u8]) -> i32 {
+    let url = send_url();
     unsafe {
         host_http_post(
-            send_url.as_ptr(), send_url.len() as i32,
-            payload.as_ptr(),  payload.len()  as i32,
+            url.as_ptr(),     url.len()     as i32,
+            payload.as_ptr(), payload.len() as i32,
         )
     }
 }
