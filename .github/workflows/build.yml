@@ -11,10 +11,6 @@ env:
   RUST_LOG: warn
 
 jobs:
-  # ───────────────────────────────────────────────────────────
-  #  1. Lint — запускается первым, остальные зависят от него
-  #     Отдельный cache-ключ чтобы не гоняться с build-jobs
-  # ───────────────────────────────────────────────────────────
   lint:
     name: Clippy + fmt
     runs-on: ubuntu-latest
@@ -25,9 +21,9 @@ jobs:
         with:
           components: clippy, rustfmt
 
-      # Для lint НЕ кэшируем target/ — именно это вызывало гонку:
-      # build-jobs и lint писали в один cache одновременно.
-      # Только registry (исходники зависимостей) — он read-only во время lint.
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+
       - name: Cache cargo registry
         uses: actions/cache@v4
         with:
@@ -36,20 +32,15 @@ jobs:
             ~/.cargo/git
           key: lint-registry-${{ hashFiles('**/Cargo.lock') }}
 
-      # Проверяем формат всех крейтов воркспейса
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-      # Clippy: lib-ядро + CLI-бинарь (плагины — wasm, на хосте не собираются)
       - name: Clippy core
-        run: cargo clippy -p core -- -D warnings
+        run: cargo clippy -p void-core -- -D warnings
 
       - name: Clippy cli
         run: cargo clippy -p cli -- -D warnings
 
-  # ───────────────────────────────────────────────────────────
-  #  2. Хост-бинарь — матрица платформ
-  # ───────────────────────────────────────────────────────────
   build-cli:
     name: Build void (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
@@ -57,35 +48,30 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # ── Linux x86_64 ──────────────────────────────────
           - name: Linux x86_64
             os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             binary: void
             run_tests: true
 
-          # ── Linux arm64 ───────────────────────────────────
           - name: Linux arm64
             os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             binary: void
             run_tests: true
 
-          # ── macOS arm64 (M1) ──────────────────────────────
           - name: macOS arm64 (M1)
             os: macos-latest
             target: aarch64-apple-darwin
             binary: void
             run_tests: true
 
-          # ── Windows x86_64 ────────────────────────────────
           - name: Windows x86_64
             os: windows-latest
             target: x86_64-pc-windows-msvc
             binary: void.exe
             run_tests: true
 
-          # ── Android aarch64 (Termux) ──────────────────────
           - name: Android aarch64 (Termux)
             os: ubuntu-latest
             target: aarch64-linux-android
@@ -100,7 +86,10 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      # cache key включает target-тройку — платформы не мешают друг другу
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+
       - name: Cache cargo
         uses: actions/cache@v4
         with:
@@ -112,7 +101,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-${{ matrix.target }}-cli-
 
-      # ── Android: NDK ──────────────────────────────────────
       - name: Setup Android NDK
         if: matrix.target == 'aarch64-linux-android'
         id: setup-ndk
@@ -125,7 +113,6 @@ jobs:
         if: matrix.target == 'aarch64-linux-android'
         run: cargo install cargo-ndk --locked
 
-      # ── Сборка Android ────────────────────────────────────
       - name: Build release (Android)
         if: matrix.target == 'aarch64-linux-android'
         env:
@@ -136,32 +123,24 @@ jobs:
             --platform 24 \
             -- build --release -p cli
 
-      # ── Сборка остальных платформ ─────────────────────────
       - name: Build release
         if: matrix.target != 'aarch64-linux-android'
         run: cargo build --release --target ${{ matrix.target }} -p cli
 
-      # ── Тесты core (только нативные платформы) ────────────
       - name: Run tests (core)
         if: matrix.run_tests
-        run: cargo test --target ${{ matrix.target }} -p core
+        run: cargo test --target ${{ matrix.target }} -p void-core
 
-      # ── Тесты cli ─────────────────────────────────────────
       - name: Run tests (cli)
         if: matrix.run_tests
         run: cargo test --target ${{ matrix.target }} -p cli
 
-      # ── Артефакт ──────────────────────────────────────────
       - name: Upload void binary
         uses: actions/upload-artifact@v4
         with:
           name: void-${{ matrix.target }}
           path: target/${{ matrix.target }}/release/${{ matrix.binary }}
 
-  # ───────────────────────────────────────────────────────────
-  #  3. Wasm-плагины
-  #     Wasm портабелен — собирать один раз на ubuntu достаточно
-  # ───────────────────────────────────────────────────────────
   build-plugins:
     name: Build Wasm plugins
     runs-on: ubuntu-latest
@@ -202,10 +181,6 @@ jobs:
             target/wasm32-wasip1/release/plugin_ntfy.wasm
             target/wasm32-wasip1/release/plugin_storage.wasm
 
-  # ───────────────────────────────────────────────────────────
-  #  4. Bundle — собирает финальный релизный архив
-  #     Запускается только когда всё выше зелёное
-  # ───────────────────────────────────────────────────────────
   bundle:
     name: Bundle release (Linux x86_64)
     runs-on: ubuntu-latest

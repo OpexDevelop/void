@@ -1,5 +1,5 @@
 [package]
-name    = "void-core" # "core"
+name    = "void-core"
 version = "0.1.0"
 edition = "2021"
 
@@ -23,6 +23,8 @@ uuid               = { version = "1",    features = ["v4"] }
 anyhow             = "1"
 thiserror          = "1"
 bytes              = "1"
+reqwest            = { version = "0.12", default-features = false, features = ["stream", "rustls-tls"] }
+futures-util       = "0.3"
 
 wasmtime      = { version = "22", optional = true }
 wasmtime-wasi = { version = "22", optional = true }

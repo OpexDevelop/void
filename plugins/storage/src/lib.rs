@@ -8,8 +8,8 @@ extern "C" {
     );
 }
 
-const DB_PATH:     &str = "./data/messages.json";
-const DB_TMP_PATH: &str = "./data/messages.json.tmp";
+const DB_PATH:     &str = "./messages.json";
+const DB_TMP_PATH: &str = "./messages.json.tmp";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredMessage {
@@ -54,11 +54,9 @@ pub extern "C" fn handle_event(
     };
 
     match meta.topic.as_str() {
-        "UI_SEND_MSG" | "CRYPTO_DECRYPTED" => {
-            store_message(&meta.id, meta.timestamp, payload_slice)
-        }
-        "DB_READ_CMD" => read_and_emit_history(),
-        _             => 0,
+        "UI_SEND_MSG" | "CRYPTO_DECRYPTED" => store_message(&meta.id, meta.timestamp, payload_slice),
+        "DB_READ_CMD"                      => read_and_emit_history(),
+        _                                  => 0,
     }
 }
 
@@ -74,7 +72,6 @@ fn persist_store(store: &MessageStore) -> bool {
         Ok(b)  => b,
         Err(_) => return false,
     };
-    let _ = std::fs::create_dir_all("./data");
     if std::fs::write(DB_TMP_PATH, &bytes).is_err() {
         return false;
     }
@@ -84,7 +81,7 @@ fn persist_store(store: &MessageStore) -> bool {
 fn store_message(id: &str, ts: u64, payload: &[u8]) -> i32 {
     let mut store = load_store();
     if store.contains_key(id) {
-        return 0; // idempotency
+        return 0;
     }
     store.insert(id.to_string(), StoredMessage {
         id:      id.to_string(),

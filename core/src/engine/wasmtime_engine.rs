@@ -1,11 +1,14 @@
+use std::time::Duration;
+
 use anyhow::Result;
+use futures_util::StreamExt;
 use tokio::sync::mpsc;
 use tracing::debug;
 use wasmtime::{Caller, Config, Engine, Instance, Linker, Module, ResourceLimiter, Store};
 use wasmtime_wasi::preview1::WasiP1Ctx;
 use wasmtime_wasi::{DirPerms, FilePerms, WasiCtxBuilder};
 
-use crate::bus::{Event, EventMeta};
+use crate::bus::{Event, EventMeta, NET_RECEIVED};
 use super::{LinkerConfig, PluginInstance, PluginRuntime};
 
 const FUEL_LIMIT:   u64   = 50_000_000;
@@ -52,6 +55,60 @@ fn read_bytes(data: &[u8], ptr: i32, len: i32) -> Option<Vec<u8>> {
     Some(data[s..e].to_vec())
 }
 
+async fn sse_loop(url: String, tx: mpsc::UnboundedSender<Event>) {
+    tracing::info!(url = %url, "SSE stream starting");
+    loop {
+        let client = reqwest::Client::new();
+        let response = match client
+            .get(&url)
+            .header("Accept", "text/event-stream")
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!(error = %e, "SSE connect failed, retry in 5s");
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                continue;
+            }
+        };
+
+        let mut stream = response.bytes_stream();
+
+        while let Some(chunk) = stream.next().await {
+            match chunk {
+                Ok(bytes) => {
+                    if let Ok(text) = std::str::from_utf8(&bytes) {
+                        for line in text.lines() {
+                            if let Some(data) = line.strip_prefix("data: ") {
+                                if data == "{}" || data.trim().is_empty() {
+                                    continue;
+                                }
+                                let payload = data.as_bytes().to_vec();
+                                let event = Event {
+                                    meta:    EventMeta::new(NET_RECEIVED),
+                                    payload,
+                                };
+                                if tx.send(event).is_err() {
+                                    tracing::warn!("SSE: event bus closed");
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "SSE stream error, reconnecting");
+                    break;
+                }
+            }
+        }
+
+        tracing::info!("SSE stream ended, reconnecting in 3s");
+        tokio::time::sleep(Duration::from_secs(3)).await;
+    }
+}
+
 impl PluginRuntime for WasmtimeRuntime {
     fn instantiate(&self, wasm_bytes: &[u8], cfg: LinkerConfig) -> Result<Box<dyn PluginInstance>> {
         let module = Module::new(&self.engine, wasm_bytes)?;
@@ -59,7 +116,6 @@ impl PluginRuntime for WasmtimeRuntime {
 
         wasmtime_wasi::preview1::add_to_linker_sync(&mut linker, |s: &mut HostState| &mut s.wasi)?;
 
-        // ── emit_event ────────────────────────────────────────────
         {
             let tx = cfg.event_tx.clone();
             linker.func_wrap(
@@ -78,7 +134,6 @@ impl PluginRuntime for WasmtimeRuntime {
             )?;
         }
 
-        // ── сетевые host-функции (только если permissions.network = true) ──
         if cfg.manifest.permissions.network {
             linker.func_wrap(
                 "env", "host_http_post",
@@ -92,8 +147,17 @@ impl PluginRuntime for WasmtimeRuntime {
                     let url  = match read_str(data, url_ptr, url_len) { Some(u) => u, None => return -1 };
                     let body = match read_bytes(data, body_ptr, body_len) { Some(b) => b, None => return -1 };
                     tokio::spawn(async move {
-                        debug!(url = %url, bytes = body.len(), "host_http_post (stub)");
-                        // TODO production: reqwest::Client::new().post(&url).body(body).send().await
+                        let client = reqwest::Client::new();
+                        match client
+                            .post(&url)
+                            .header("Content-Type", "text/plain")
+                            .body(body)
+                            .send()
+                            .await
+                        {
+                            Ok(resp) => tracing::info!(url = %url, status = %resp.status(), "http_post ok"),
+                            Err(e)   => tracing::error!(url = %url, error = %e, "http_post failed"),
+                        }
                     });
                     0
                 },
@@ -112,9 +176,7 @@ impl PluginRuntime for WasmtimeRuntime {
                         let url  = match read_str(data, url_ptr, url_len) { Some(u) => u, None => return -1 };
                         let tx2  = tx.clone();
                         tokio::spawn(async move {
-                            debug!(url = %url, "host_sse_start (stub)");
-                            // TODO production: stream SSE → emit NET_RECEIVED
-                            let _ = tx2;
+                            sse_loop(url, tx2).await;
                         });
                         0
                     },
@@ -122,7 +184,6 @@ impl PluginRuntime for WasmtimeRuntime {
             }
         }
 
-        // ── WASI контекст ─────────────────────────────────────────
         let mut ctx_builder = WasiCtxBuilder::new();
         ctx_builder.inherit_stdio();
 
