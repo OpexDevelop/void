@@ -10,11 +10,11 @@ path = "src/main.rs"
 
 [features]
 default          = ["wasmtime-backend"]
-wasmtime-backend = ["core/wasmtime-backend"]
-wasmi-backend    = ["core/wasmi-backend"]
+wasmtime-backend = ["void-core/wasmtime-backend"]
+wasmi-backend    = ["void-core/wasmi-backend"]
 
 [dependencies]
-core               = { path = "../core" }
+void-core               = { path = "../core" }
 tokio              = { version = "1", features = ["full"] }
 serde_json         = "1"
 anyhow             = "1"

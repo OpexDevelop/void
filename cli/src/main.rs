@@ -6,15 +6,15 @@ use tokio::sync::mpsc;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
-use core::bus::{Event, EventMeta, DB_READ_CMD, SYS_STARTUP, UI_SEND_MSG};
-use core::manifest::PluginManifest;
-use core::supervisor::Supervisor;
+use void_core::bus::{Event, EventMeta, DB_READ_CMD, SYS_STARTUP, UI_SEND_MSG};
+use void_core::manifest::PluginManifest;
+use void_core::supervisor::Supervisor;
 
 #[cfg(feature = "wasmtime-backend")]
-use core::engine::wasmtime_engine::WasmtimeRuntime;
+use void_core::engine::wasmtime_engine::WasmtimeRuntime;
 
 #[cfg(all(feature = "wasmi-backend", not(feature = "wasmtime-backend")))]
-use core::engine::wasmi_engine::WasmiRuntime;
+use void_core::engine::wasmi_engine::WasmiRuntime;
 
 struct CliArgs {
     /// ntfy topic — передаётся в plugin-ntfy через SYS_STARTUP payload
@@ -83,10 +83,10 @@ async fn main() -> Result<()> {
 
     // ── runtime ───────────────────────────────────────────────────────────
     #[cfg(feature = "wasmtime-backend")]
-    let runtime: Arc<dyn core::engine::PluginRuntime> = Arc::new(WasmtimeRuntime::new()?);
+    let runtime: Arc<dyn void_core::engine::PluginRuntime> = Arc::new(WasmtimeRuntime::new()?);
 
     #[cfg(all(feature = "wasmi-backend", not(feature = "wasmtime-backend")))]
-    let runtime: Arc<dyn core::engine::PluginRuntime> = Arc::new(WasmiRuntime::new()?);
+    let runtime: Arc<dyn void_core::engine::PluginRuntime> = Arc::new(WasmiRuntime::new()?);
 
     // ── каналы ────────────────────────────────────────────────────────────
     let (global_tx, global_rx) = mpsc::unbounded_channel::<Event>();
