@@ -1,63 +1,55 @@
 use serde::Deserialize;
-use crate::models::{PluginInfo, PluginPermissions};
 
-#[derive(Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct PluginManifest {
-    pub plugin: PluginSection,
-    pub capabilities: CapabilitiesSection,
-    pub permissions: PermissionsSection,
-    pub limits: LimitsSection,
+    pub plugin:      PluginInfo,
+    pub events:      EventsConfig,
+    pub supervisor:  SupervisorConfig,
+    pub permissions: PermissionsConfig,
 }
 
-#[derive(Deserialize)]
-pub struct PluginSection {
-    pub id: String,
-    pub name: String,
-    pub version: String,
-    pub category: String,
-    pub description: String,
+#[derive(Debug, Clone, Deserialize)]
+pub struct PluginInfo {
+    pub id:        String,
+    pub version:   String,
+    pub sha256:    String,
+    pub signature: String,
+    pub wasm_path: String,
 }
 
-#[derive(Deserialize)]
-pub struct CapabilitiesSection {
-    pub provides: Vec<String>,
-    pub subscribes_to: Vec<String>,
-    pub emits: Vec<String>,
+#[derive(Debug, Clone, Deserialize)]
+pub struct EventsConfig {
+    pub subscriptions:  Vec<String>,
+    pub max_queue_size: usize,
 }
 
-#[derive(Deserialize)]
-pub struct PermissionsSection {
+#[derive(Debug, Clone, Deserialize)]
+pub struct SupervisorConfig {
+    pub restart_policy: RestartPolicy,
+    pub max_retries:    u32,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum RestartPolicy {
+    Always,
+    OnFailure,
+    Never,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct PermissionsConfig {
+    #[serde(default)]
     pub network: bool,
+    #[serde(default)]
     pub filesystem: bool,
-    pub contacts: bool,
-    pub clipboard: bool,
-    pub notifications: bool,
+    #[serde(default)]
+    pub allowed_dirs: Vec<String>,
 }
 
-#[derive(Deserialize)]
-pub struct LimitsSection {
-    pub max_memory_mb: u32,
-    pub timeout_ms: u32,
-}
-
-pub fn parse_manifest(toml_str: &str) -> Result<PluginManifest, String> {
-    toml::from_str(toml_str).map_err(|e| e.to_string())
-}
-
-pub fn manifest_to_plugin_info(m: &PluginManifest) -> PluginInfo {
-    PluginInfo {
-        id: m.plugin.id.clone(),
-        name: m.plugin.name.clone(),
-        version: m.plugin.version.clone(),
-        category: m.plugin.category.clone(),
-        description: m.plugin.description.clone(),
-        active: true,
-        permissions: PluginPermissions {
-            network: m.permissions.network,
-            filesystem: m.permissions.filesystem,
-            contacts: m.permissions.contacts,
-            clipboard: m.permissions.clipboard,
-            notifications: m.permissions.notifications,
-        },
+impl PluginManifest {
+    pub fn from_file(path: &str) -> anyhow::Result<Self> {
+        let content = std::fs::read_to_string(path)?;
+        Ok(toml::from_str(&content)?)
     }
 }

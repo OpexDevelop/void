@@ -1,0 +1,19 @@
+[plugin]
+id        = "crypto"
+version   = "1.0.0"
+sha256    = "0000000000000000000000000000000000000000000000000000000000000000"
+signature = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+wasm_path = "target/wasm32-wasip1/release/plugin_crypto.wasm"
+
+[events]
+subscriptions  = ["UI_SEND_MSG", "NET_RECEIVED"]
+max_queue_size = 1000
+
+[supervisor]
+restart_policy = "always"
+max_retries    = 3
+
+[permissions]
+network        = false
+filesystem     = false
+allowed_dirs   = []

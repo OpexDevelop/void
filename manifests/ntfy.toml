@@ -1,0 +1,19 @@
+[plugin]
+id        = "ntfy"
+version   = "1.0.0"
+sha256    = "0000000000000000000000000000000000000000000000000000000000000000"
+signature = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+wasm_path = "target/wasm32-wasip1/release/plugin_ntfy.wasm"
+
+[events]
+subscriptions  = ["SYS_STARTUP", "CRYPTO_ENCRYPTED", "NET_RECEIVED"]
+max_queue_size = 500
+
+[supervisor]
+restart_policy = "on_failure"
+max_retries    = 5
+
+[permissions]
+network        = true
+filesystem     = false
+allowed_dirs   = []

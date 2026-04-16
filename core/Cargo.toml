@@ -1,17 +1,31 @@
 [package]
-name = "messenger_core"
-version = "0.2.0-alpha"
+name = "core"
+version = "0.1.0"
 edition = "2021"
+default-run = "core"
 
-[lib]
-name = "messenger_core"
-crate-type = ["cdylib", "staticlib"]
+[features]
+default = ["wasmtime-backend"]
+wasmtime-backend = ["dep:wasmtime", "dep:wasmtime-wasi"]
+wasmi-backend   = ["dep:wasmi"]
 
 [dependencies]
-extism = "1"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-toml = "0.8"
-base64 = "0.22"
-uuid = { version = "1", features = ["v4"] }
-anyhow = "1"
+tokio              = { version = "1",    features = ["full"] }
+serde              = { version = "1",    features = ["derive"] }
+serde_json         = "1"
+toml               = "0.8"
+ed25519-dalek      = { version = "2",    features = ["std"] }
+sha2               = "0.10"
+hex                = "0.4"
+base64             = { version = "0.22", features = ["std"] }
+tracing            = "0.1"
+tracing-subscriber = { version = "0.3",  features = ["env-filter", "fmt"] }
+notify             = "6"
+uuid               = { version = "1",    features = ["v4"] }
+anyhow             = "1"
+thiserror          = "1"
+bytes              = "1"
+
+wasmtime      = { version = "22", optional = true }
+wasmtime-wasi = { version = "22", optional = true }
+wasmi         = { version = "0.31", optional = true }
