@@ -3,7 +3,6 @@ use std::time::Duration;
 use anyhow::Result;
 use futures_util::StreamExt;
 use tokio::sync::mpsc;
-use tracing::debug;
 use wasmtime::{Caller, Config, Engine, Instance, Linker, Module, ResourceLimiter, Store};
 use wasmtime_wasi::preview1::WasiP1Ctx;
 use wasmtime_wasi::{DirPerms, FilePerms, WasiCtxBuilder};
@@ -58,7 +57,11 @@ fn read_bytes(data: &[u8], ptr: i32, len: i32) -> Option<Vec<u8>> {
 async fn sse_loop(url: String, tx: mpsc::UnboundedSender<Event>) {
     tracing::info!(url = %url, "SSE stream starting");
     loop {
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(300))
+            .build()
+            .unwrap_or_default();
+
         let response = match client
             .get(&url)
             .header("Accept", "text/event-stream")
@@ -74,14 +77,24 @@ async fn sse_loop(url: String, tx: mpsc::UnboundedSender<Event>) {
         };
 
         let mut stream = response.bytes_stream();
+        let mut buf = String::new();
 
         while let Some(chunk) = stream.next().await {
             match chunk {
                 Ok(bytes) => {
-                    if let Ok(text) = std::str::from_utf8(&bytes) {
-                        for line in text.lines() {
+                    let text = match std::str::from_utf8(&bytes) {
+                        Ok(t) => t,
+                        Err(_) => continue,
+                    };
+                    buf.push_str(text);
+
+                    while let Some(pos) = buf.find("\n\n") {
+                        let block = buf[..pos].to_string();
+                        buf = buf[pos + 2..].to_string();
+
+                        for line in block.lines() {
                             if let Some(data) = line.strip_prefix("data: ") {
-                                if data == "{}" || data.trim().is_empty() {
+                                if data.trim().is_empty() || data.trim() == "{}" {
                                     continue;
                                 }
                                 let payload = data.as_bytes().to_vec();
@@ -150,13 +163,13 @@ impl PluginRuntime for WasmtimeRuntime {
                         let client = reqwest::Client::new();
                         match client
                             .post(&url)
-                            .header("Content-Type", "text/plain")
+                            .header("Content-Type", "text/plain; charset=utf-8")
                             .body(body)
                             .send()
                             .await
                         {
-                            Ok(resp) => tracing::info!(url = %url, status = %resp.status(), "http_post ok"),
-                            Err(e)   => tracing::error!(url = %url, error = %e, "http_post failed"),
+                            Ok(resp)  => tracing::info!(url = %url, status = %resp.status(), "http_post ok"),
+                            Err(e)    => tracing::error!(url = %url, error = %e, "http_post failed"),
                         }
                     });
                     0

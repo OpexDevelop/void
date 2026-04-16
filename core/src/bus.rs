@@ -30,21 +30,13 @@ pub struct Event {
     pub payload: Vec<u8>,
 }
 
-// ── системные ──────────────────────────────────────────────
-pub const SYS_STARTUP:  &str = "SYS_STARTUP";
-pub const SYS_SHUTDOWN: &str = "SYS_SHUTDOWN";
-pub const SYS_DLQ:      &str = "SYS_DLQ";
-
-// ── пользователь ───────────────────────────────────────────
-pub const UI_SEND_MSG:  &str = "UI_SEND_MSG";
-
-// ── крипто ─────────────────────────────────────────────────
-pub const CRYPTO_ENCRYPTED: &str = "CRYPTO_ENCRYPTED";
-pub const CRYPTO_DECRYPTED: &str = "CRYPTO_DECRYPTED";
-
-// ── сеть ───────────────────────────────────────────────────
-pub const NET_RECEIVED: &str = "NET_RECEIVED";
-
-// ── хранилище ──────────────────────────────────────────────
-pub const DB_READ_CMD:      &str = "DB_READ_CMD";
-pub const DB_HISTORY_RESULT: &str = "DB_HISTORY_RESULT";
+pub const SYS_STARTUP:        &str = "SYS_STARTUP";
+pub const SYS_SHUTDOWN:       &str = "SYS_SHUTDOWN";
+pub const SYS_DLQ:            &str = "SYS_DLQ";
+pub const UI_SEND_MSG:        &str = "UI_SEND_MSG";
+pub const CRYPTO_ENCRYPTED:   &str = "CRYPTO_ENCRYPTED";
+pub const CRYPTO_DECRYPTED:   &str = "CRYPTO_DECRYPTED";
+pub const NET_RECEIVED:       &str = "NET_RECEIVED";
+pub const NET_RECEIVED_MSG:   &str = "NET_RECEIVED_MSG";
+pub const DB_READ_CMD:        &str = "DB_READ_CMD";
+pub const DB_HISTORY_RESULT:  &str = "DB_HISTORY_RESULT";

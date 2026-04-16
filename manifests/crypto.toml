@@ -6,7 +6,7 @@ signature = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 wasm_path = "target/wasm32-wasip1/release/plugin_crypto.wasm"
 
 [events]
-subscriptions  = ["UI_SEND_MSG", "NET_RECEIVED"]
+subscriptions  = ["UI_SEND_MSG", "NET_RECEIVED_MSG"]
 max_queue_size = 1000
 
 [supervisor]
