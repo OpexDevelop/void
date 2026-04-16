@@ -62,9 +62,7 @@ pub extern "C" fn dealloc(ptr: *mut u8, size: i32) {
 }
 
 #[derive(Deserialize)]
-struct EventMeta {
-    topic: String,
-}
+struct EventMeta { topic: String }
 
 #[derive(Deserialize, Default)]
 struct StartupPayload {
@@ -76,6 +74,8 @@ struct StartupPayload {
 struct NtfyEvent {
     #[serde(default)]
     message: String,
+    #[serde(default)]
+    event: String,
 }
 
 #[no_mangle]
@@ -114,28 +114,37 @@ fn on_startup(payload: &[u8]) -> i32 {
     unsafe { host_sse_start(url.as_ptr(), url.len() as i32) }
 }
 
-fn send_encrypted(payload: &[u8]) -> i32 {
+fn send_encrypted(ciphertext: &[u8]) -> i32 {
+    let encoded = base64_encode(ciphertext);
     let url = send_url();
     unsafe {
         host_http_post(
-            url.as_ptr(),     url.len()     as i32,
-            payload.as_ptr(), payload.len() as i32,
+            url.as_ptr(),          url.len()          as i32,
+            encoded.as_ptr(),      encoded.len()      as i32,
         )
     }
 }
 
 fn on_net_received(payload: &[u8]) -> i32 {
-    let message_bytes = if let Ok(ev) = serde_json::from_slice::<NtfyEvent>(payload) {
-        if !ev.message.is_empty() {
-            ev.message.into_bytes()
-        } else {
-            payload.to_vec()
-        }
-    } else {
-        payload.to_vec()
+    let ntfy_ev = match serde_json::from_slice::<NtfyEvent>(payload) {
+        Ok(e) => e,
+        Err(_) => return 0,
     };
 
-    emit("NET_RECEIVED_MSG", &message_bytes);
+    if ntfy_ev.event == "keepalive" || ntfy_ev.event == "open" {
+        return 0;
+    }
+
+    if ntfy_ev.message.is_empty() {
+        return 0;
+    }
+
+    let decoded = match base64_decode(ntfy_ev.message.trim()) {
+        Some(v) => v,
+        None    => return 0,
+    };
+
+    emit("NET_RECEIVED_MSG", &decoded);
     0
 }
 
@@ -147,3 +156,53 @@ fn emit(topic: &str, payload: &[u8]) {
         );
     }
 }
+
+const BASE64_CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+fn base64_encode(input: &[u8]) -> alloc::vec::Vec<u8> {
+    let mut out = alloc::vec::Vec::new();
+    let mut i = 0usize;
+    while i < input.len() {
+        let b0 = input[i] as u32;
+        let b1 = if i + 1 < input.len() { input[i + 1] as u32 } else { 0 };
+        let b2 = if i + 2 < input.len() { input[i + 2] as u32 } else { 0 };
+        let n = (b0 << 16) | (b1 << 8) | b2;
+        out.push(BASE64_CHARS[((n >> 18) & 63) as usize]);
+        out.push(BASE64_CHARS[((n >> 12) & 63) as usize]);
+        out.push(if i + 1 < input.len() { BASE64_CHARS[((n >> 6) & 63) as usize] } else { b'=' });
+        out.push(if i + 2 < input.len() { BASE64_CHARS[(n & 63) as usize] } else { b'=' });
+        i += 3;
+    }
+    out
+}
+
+fn base64_decode(input: &str) -> Option<alloc::vec::Vec<u8>> {
+    let mut table = [0xffu8; 256];
+    for (i, &c) in BASE64_CHARS.iter().enumerate() {
+        table[c as usize] = i as u8;
+    }
+    let input = input.trim_end_matches('=');
+    let bytes = input.as_bytes();
+    let mut out = alloc::vec::Vec::new();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let c0 = table.get(bytes[i] as usize).copied().unwrap_or(0xff);
+        let c1 = table.get(bytes.get(i + 1).copied().unwrap_or(0) as usize).copied().unwrap_or(0xff);
+        if c0 == 0xff || c1 == 0xff { return None; }
+        out.push((c0 << 2) | (c1 >> 4));
+        if i + 2 < bytes.len() {
+            let c2 = table.get(bytes[i + 2] as usize).copied().unwrap_or(0xff);
+            if c2 == 0xff { return None; }
+            out.push((c1 << 4) | (c2 >> 2));
+            if i + 3 < bytes.len() {
+                let c3 = table.get(bytes[i + 3] as usize).copied().unwrap_or(0xff);
+                if c3 == 0xff { return None; }
+                out.push((c2 << 6) | c3);
+            }
+        }
+        i += 4;
+    }
+    Some(out)
+}
+
+extern crate alloc;
