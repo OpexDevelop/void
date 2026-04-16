@@ -11,7 +11,7 @@ extern "C" {
     );
 }
 
-const KEY_BYTES: &[u8; 32] = b"wasm-plugin-host-secret-key-2024";
+const KEY_BYTES:   &[u8; 32] = b"wasm-plugin-host-secret-key-2024";
 const NONCE_BYTES: &[u8; 12] = b"unique-nonce";
 
 #[no_mangle]
@@ -34,7 +34,7 @@ struct EventMeta {
 
 #[no_mangle]
 pub extern "C" fn handle_event(
-    meta_ptr:    *const u8, meta_len:    i32,
+    meta_ptr: *const u8, meta_len: i32,
     payload_ptr: *const u8, payload_len: i32,
 ) -> i32 {
     let meta_slice    = unsafe { std::slice::from_raw_parts(meta_ptr,    meta_len    as usize) };
@@ -46,9 +46,9 @@ pub extern "C" fn handle_event(
     };
 
     match meta.topic.as_str() {
-        "UI_SEND_MSG"   => encrypt_and_emit(payload_slice),
-        "NET_RECEIVED"  => decrypt_and_emit(payload_slice),
-        _               => 0,
+        "UI_SEND_MSG"  => encrypt_and_emit(payload_slice),
+        "NET_RECEIVED" => decrypt_and_emit(payload_slice),
+        _              => 0,
     }
 }
 
@@ -59,16 +59,16 @@ fn cipher() -> ChaCha20Poly1305 {
 fn encrypt_and_emit(plaintext: &[u8]) -> i32 {
     let nonce = Nonce::from_slice(NONCE_BYTES);
     match cipher().encrypt(nonce, plaintext) {
-        Ok(ciphertext) => { emit("CRYPTO_ENCRYPTED", &ciphertext); 0 }
-        Err(_)         => 1,
+        Ok(ct) => { emit("CRYPTO_ENCRYPTED", &ct); 0 }
+        Err(_) => 1,
     }
 }
 
 fn decrypt_and_emit(ciphertext: &[u8]) -> i32 {
     let nonce = Nonce::from_slice(NONCE_BYTES);
     match cipher().decrypt(nonce, ciphertext) {
-        Ok(plaintext) => { emit("CRYPTO_DECRYPTED", &plaintext); 0 }
-        Err(_)        => 1,
+        Ok(pt) => { emit("CRYPTO_DECRYPTED", &pt); 0 }
+        Err(_) => 1,
     }
 }
 

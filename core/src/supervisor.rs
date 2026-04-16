@@ -1,7 +1,6 @@
-use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+use std::path::PathBuf;
 
 use anyhow::Result;
 use notify::{Event as FsEvent, RecommendedWatcher, RecursiveMode, Watcher};
@@ -19,10 +18,10 @@ struct PluginEntry {
 }
 
 pub struct Supervisor {
-    runtime:     Arc<dyn PluginRuntime>,
-    global_tx:   mpsc::UnboundedSender<Event>,
-    dlq_tx:      mpsc::UnboundedSender<Event>,
-    plugins:     Vec<PluginEntry>,
+    runtime:   Arc<dyn PluginRuntime>,
+    global_tx: mpsc::UnboundedSender<Event>,
+    dlq_tx:    mpsc::UnboundedSender<Event>,
+    plugins:   Vec<PluginEntry>,
 }
 
 impl Supervisor {
@@ -105,8 +104,6 @@ impl Supervisor {
             ))
             .collect();
 
-        let global_tx = self.global_tx.clone();
-
         let (fs_tx, mut fs_rx) = mpsc::unbounded_channel::<PathBuf>();
 
         tokio::spawn(async move {
@@ -122,14 +119,9 @@ impl Supervisor {
                         let _ = plugin_tx.try_send(shutdown);
                         tokio::time::sleep(Duration::from_millis(500)).await;
 
-                        info!(plugin = %id, "Reloading wasm from {}", wasm_path);
                         match std::fs::read(wasm_path) {
-                            Ok(_bytes) => {
-                                info!(plugin = %id, "Hot-swap complete (new bytes loaded)");
-                            }
-                            Err(e) => {
-                                error!(plugin = %id, error = %e, "Hot-swap read failed");
-                            }
+                            Ok(_bytes) => info!(plugin = %id, "Hot-swap complete"),
+                            Err(e)     => error!(plugin = %id, error = %e, "Hot-swap read failed"),
                         }
                     }
                 }
@@ -156,12 +148,12 @@ impl Supervisor {
 }
 
 fn spawn_plugin_worker(
-    runtime:   Arc<dyn PluginRuntime>,
+    runtime:    Arc<dyn PluginRuntime>,
     wasm_bytes: Vec<u8>,
-    manifest:  PluginManifest,
-    rx:        mpsc::Receiver<Event>,
-    global_tx: mpsc::UnboundedSender<Event>,
-    dlq_tx:    mpsc::UnboundedSender<Event>,
+    manifest:   PluginManifest,
+    rx:         mpsc::Receiver<Event>,
+    global_tx:  mpsc::UnboundedSender<Event>,
+    dlq_tx:     mpsc::UnboundedSender<Event>,
 ) {
     tokio::spawn(async move {
         plugin_worker_loop(runtime, wasm_bytes, manifest, rx, global_tx, dlq_tx).await;
@@ -178,14 +170,18 @@ async fn plugin_worker_loop(
 ) {
     let id = manifest.plugin.id.clone();
 
+    // BUG FIX #2: instantiate вызывает wasmtime-wasi sync bridge, который
+    // внутри делает Handle::block_on — это паникует внутри async-задачи.
+    // block_in_place говорит планировщику "уберите другие задачи с этого потока"
+    // и позволяет block_on завершиться без panic.
     let make_instance = || {
-        runtime.instantiate(
-            &wasm_bytes,
-            LinkerConfig {
-                event_tx: global_tx.clone(),
-                manifest: manifest.clone(),
-            },
-        )
+        let rt    = Arc::clone(&runtime);
+        let bytes = wasm_bytes.clone();
+        let cfg   = LinkerConfig {
+            event_tx: global_tx.clone(),
+            manifest: manifest.clone(),
+        };
+        tokio::task::block_in_place(|| rt.instantiate(&bytes, cfg))
     };
 
     let mut instance: Box<dyn PluginInstance> = match make_instance() {
@@ -212,7 +208,13 @@ async fn plugin_worker_loop(
 
         let fuel_before = instance.fuel_consumed();
 
-        match instance.handle_event(&meta_json, &event.payload) {
+        // BUG FIX #2 (продолжение): handle_event → wasm → WASI syscall (fs read/write)
+        // → sync bridge → block_on → panic без block_in_place
+        let handle_result = tokio::task::block_in_place(|| {
+            instance.handle_event(&meta_json, &event.payload)
+        });
+
+        match handle_result {
             Ok(_) => {
                 let fuel_used = instance.fuel_consumed().saturating_sub(fuel_before);
                 debug!(plugin = %id, topic = %event.meta.topic, fuel = fuel_used, "handled");
@@ -231,8 +233,11 @@ async fn plugin_worker_loop(
                     retry_count += 1;
                     warn!(plugin = %id, attempt = retry_count, "restarting");
                     match make_instance() {
-                        Ok(new)  => { instance = new; }
-                        Err(e2)  => { error!(plugin = %id, error = %e2, "restart failed"); return; }
+                        Ok(new) => { instance = new; }
+                        Err(e2) => {
+                            error!(plugin = %id, error = %e2, "restart failed");
+                            return;
+                        }
                     }
                 } else {
                     error!(plugin = %id, "max retries exceeded, stopping worker");

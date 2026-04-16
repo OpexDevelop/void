@@ -83,34 +83,25 @@ fn persist_store(store: &MessageStore) -> bool {
 
 fn store_message(id: &str, ts: u64, payload: &[u8]) -> i32 {
     let mut store = load_store();
-
     if store.contains_key(id) {
-        return 0;
+        return 0; // idempotency
     }
-
-    store.insert(
-        id.to_string(),
-        StoredMessage {
-            id:      id.to_string(),
-            payload: payload.to_vec(),
-            ts,
-        },
-    );
-
+    store.insert(id.to_string(), StoredMessage {
+        id:      id.to_string(),
+        payload: payload.to_vec(),
+        ts,
+    });
     if persist_store(&store) { 0 } else { 1 }
 }
 
 fn read_and_emit_history() -> i32 {
     let store = load_store();
-
     let mut messages: Vec<StoredMessage> = store.into_values().collect();
     messages.sort_by_key(|m| m.ts);
-
     let result = match serde_json::to_vec(&messages) {
         Ok(v)  => v,
         Err(_) => return 1,
     };
-
     emit("DB_HISTORY_RESULT", &result);
     0
 }

@@ -19,7 +19,7 @@ pub trait PluginRuntime: Send + Sync + 'static {
     fn instantiate(
         &self,
         wasm_bytes: &[u8],
-        config: LinkerConfig,
+        config:     LinkerConfig,
     ) -> Result<Box<dyn PluginInstance>>;
 }
 

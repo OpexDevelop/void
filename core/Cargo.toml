@@ -1,13 +1,12 @@
 [package]
-name = "core"
+name    = "core"
 version = "0.1.0"
 edition = "2021"
-default-run = "core"
 
 [features]
-default = ["wasmtime-backend"]
+default          = ["wasmtime-backend"]
 wasmtime-backend = ["dep:wasmtime", "dep:wasmtime-wasi"]
-wasmi-backend   = ["dep:wasmi"]
+wasmi-backend    = ["dep:wasmi"]
 
 [dependencies]
 tokio              = { version = "1",    features = ["full"] }
@@ -19,7 +18,6 @@ sha2               = "0.10"
 hex                = "0.4"
 base64             = { version = "0.22", features = ["std"] }
 tracing            = "0.1"
-tracing-subscriber = { version = "0.3",  features = ["env-filter", "fmt"] }
 notify             = "6"
 uuid               = { version = "1",    features = ["v4"] }
 anyhow             = "1"

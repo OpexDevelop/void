@@ -1,14 +1,20 @@
 [workspace]
-members = ["core", "plugin-crypto", "plugin-ntfy", "plugin-storage"]
+members = [
+    "core",
+    "cli",
+    "plugins/crypto",
+    "plugins/ntfy",
+    "plugins/storage",
+]
 resolver = "2"
 
 [profile.release]
-opt-level = 3
-lto = "thin"
+opt-level     = 3
+lto           = "thin"
 codegen-units = 1
 
 [profile.plugin-release]
-inherits = "release"
+inherits  = "release"
 opt-level = "s"
-strip = "symbols"
-panic = "abort"
+strip     = "symbols"
+panic     = "abort"

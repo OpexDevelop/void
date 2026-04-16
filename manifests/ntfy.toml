@@ -14,6 +14,6 @@ restart_policy = "on_failure"
 max_retries    = 5
 
 [permissions]
-network        = true
-filesystem     = false
-allowed_dirs   = []
+network      = true
+filesystem   = false
+allowed_dirs = []
