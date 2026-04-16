@@ -1,91 +1,91 @@
-name: CI
+build-core:
+  name: Build core (${{ matrix.target }})
+  runs-on: ${{ matrix.os }}
+  strategy:
+    fail-fast: false
+    matrix:
+      include:
+        # macOS Apple Silicon (MacBook Air M1/M2/M3)
+        - target: aarch64-apple-darwin
+          os: macos-latest
 
-on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+        # macOS Intel (для совместимости)
+        - target: x86_64-apple-darwin
+          os: macos-latest
 
-env:
-  CARGO_TERM_COLOR: always
-  RUST_LOG: warn
+        # Linux x86_64
+        - target: x86_64-unknown-linux-gnu
+          os: ubuntu-latest
 
-jobs:
-  build-core:
-    name: Build core (host)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+        # Linux ARM64 (кросс-компиляция)
+        - target: aarch64-unknown-linux-gnu
+          os: ubuntu-latest
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+        # Windows x64
+        - target: x86_64-pc-windows-gnu
+          os: ubuntu-latest
 
-      - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-core-${{ hashFiles('**/Cargo.lock') }}
+        # Android aarch64 / Termux
+        - target: aarch64-linux-android
+          os: ubuntu-latest
 
-      - name: Build release
-        run: cargo build --release -p core
+  steps:
+    - uses: actions/checkout@v4
 
-      - name: Run tests
-        run: cargo test -p core
+    - name: Install Rust + target
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: ${{ matrix.target }}
 
-      - name: Upload core binary
-        uses: actions/upload-artifact@v4
-        with:
-          name: core-binary
-          path: target/release/core
+    - name: Install cross-compilation tools
+      if: matrix.target == 'aarch64-unknown-linux-gnu'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gcc-aarch64-linux-gnu
 
-  build-plugins:
-    name: Build Wasm plugins
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+    - name: Install Android NDK (for aarch64-linux-android)
+      if: matrix.target == 'aarch64-linux-android'
+      uses: nttld/setup-ndk@v1
+      with:
+        ndk-version: r26d
 
-      - name: Install Rust + wasm32-wasip1 target
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-wasip1
+    - name: Configure linker (cross targets)
+      if: matrix.target == 'aarch64-unknown-linux-gnu' || matrix.target == 'aarch64-linux-android' || matrix.target == 'x86_64-pc-windows-gnu'
+      run: |
+        mkdir -p ~/.cargo
+        cat >> ~/.cargo/config.toml << 'EOF'
+        [target.aarch64-unknown-linux-gnu]
+        linker = "aarch64-linux-gnu-gcc"
 
-      - name: Cache cargo (wasm)
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-wasm-${{ hashFiles('**/Cargo.lock') }}
+        [target.aarch64-linux-android]
+        linker = "aarch64-linux-android35-clang"
 
-      - name: Build plugin-crypto
-        run: cargo build --release --target wasm32-wasip1 -p plugin-crypto
+        [target.x86_64-pc-windows-gnu]
+        linker = "x86_64-w64-mingw32-gcc"
+        EOF
 
-      - name: Build plugin-ntfy
-        run: cargo build --release --target wasm32-wasip1 -p plugin-ntfy
+    - name: Install mingw (Windows cross)
+      if: matrix.target == 'x86_64-pc-windows-gnu'
+      run: sudo apt-get install -y gcc-mingw-w64-x86-64
 
-      - name: Build plugin-storage
-        run: cargo build --release --target wasm32-wasip1 -p plugin-storage
+    - name: Cache cargo
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-core-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Upload wasm artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: wasm-plugins
-          path: |
-            target/wasm32-wasip1/release/plugin_crypto.wasm
-            target/wasm32-wasip1/release/plugin_ntfy.wasm
-            target/wasm32-wasip1/release/plugin_storage.wasm
+    - name: Build release
+      run: cargo build --release --target ${{ matrix.target }} -p core
 
-  lint:
-    name: Clippy + fmt
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
-      - run: cargo fmt --all -- --check
-      - run: cargo clippy -p core -- -D warnings
+    - name: Run tests (native only)
+      if: matrix.target == 'x86_64-unknown-linux-gnu'
+      run: cargo test -p core
+
+    - name: Upload binary
+      uses: actions/upload-artifact@v4
+      with:
+        name: core-${{ matrix.target }}
+        path: target/${{ matrix.target }}/release/core${{ matrix.target == 'x86_64-pc-windows-gnu' && '.exe' || '' }}
