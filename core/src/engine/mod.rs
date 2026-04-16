@@ -1,8 +1,8 @@
 use anyhow::Result;
+use std::path::PathBuf;
 use tokio::sync::mpsc;
 
-use crate::bus::Event;
-use crate::manifest::PluginManifest;
+use crate::event::Event;
 
 #[cfg(feature = "wasmtime-backend")]
 pub mod wasmtime_engine;
@@ -10,16 +10,23 @@ pub mod wasmtime_engine;
 #[cfg(feature = "wasmi-backend")]
 pub mod wasmi_engine;
 
-pub struct LinkerConfig {
-    pub event_tx: mpsc::UnboundedSender<Event>,
-    pub manifest: PluginManifest,
+#[derive(Debug, Clone)]
+pub struct Permissions {
+    pub network:      bool,
+    pub filesystem:   bool,
+    pub allowed_dirs: Vec<PathBuf>,
+}
+
+pub struct HostContext {
+    pub event_tx:    mpsc::UnboundedSender<Event>,
+    pub permissions: Permissions,
 }
 
 pub trait PluginRuntime: Send + Sync + 'static {
     fn instantiate(
         &self,
         wasm_bytes: &[u8],
-        config:     LinkerConfig,
+        ctx:        HostContext,
     ) -> Result<Box<dyn PluginInstance>>;
 }
 

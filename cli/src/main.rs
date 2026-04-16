@@ -3,13 +3,11 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use tokio::sync::mpsc;
-use tracing::{error, info};
+use tracing::info;
 use tracing_subscriber::EnvFilter;
 
-use void_core::bus::{
-    Event, EventMeta, CRYPTO_DECRYPTED, DB_HISTORY_RESULT, DB_READ_CMD,
-    SYS_STARTUP, UI_SEND_MSG,
-};
+use void_core::event::{Event, EventMeta};
+use void_core::hotswap::HotSwapConfig;
 use void_core::manifest::PluginManifest;
 use void_core::supervisor::Supervisor;
 
@@ -18,6 +16,12 @@ use void_core::engine::wasmtime_engine::WasmtimeRuntime;
 
 #[cfg(all(feature = "wasmi-backend", not(feature = "wasmtime-backend")))]
 use void_core::engine::wasmi_engine::WasmiRuntime;
+
+const TOPIC_SYS_STARTUP:      &str = "SYS_STARTUP";
+const TOPIC_UI_SEND_MSG:      &str = "UI_SEND_MSG";
+const TOPIC_DB_READ_CMD:      &str = "DB_READ_CMD";
+const TOPIC_CRYPTO_DECRYPTED: &str = "CRYPTO_DECRYPTED";
+const TOPIC_DB_HISTORY_RESULT:&str = "DB_HISTORY_RESULT";
 
 struct CliArgs {
     chat_id:       String,
@@ -49,18 +53,10 @@ impl CliArgs {
                 }
                 "--help" | "-h" => {
                     println!("void [--chat <id>] [--manifests <dir>]");
-                    println!();
-                    println!("  --chat <id>        ntfy topic  (default: wasm-messenger)");
-                    println!("  --manifests <dir>  manifest dir (default: manifests)");
-                    println!();
-                    println!("REPL commands:");
-                    println!("  /history   show stored history");
-                    println!("  /quit      exit");
-                    println!("  <text>     send message");
                     std::process::exit(0);
                 }
                 other => {
-                    eprintln!("unknown argument `{other}`, try --help");
+                    eprintln!("unknown argument `{other}`");
                     std::process::exit(1);
                 }
             }
@@ -81,7 +77,6 @@ async fn main() -> Result<()> {
         .init();
 
     let args = CliArgs::parse();
-
     info!(chat = %args.chat_id, "void starting");
 
     #[cfg(feature = "wasmtime-backend")]
@@ -94,74 +89,40 @@ async fn main() -> Result<()> {
 
     let (global_tx, global_rx) = mpsc::unbounded_channel::<Event>();
     let (dlq_tx, mut dlq_rx)   = mpsc::unbounded_channel::<Event>();
+    let (host_tx, mut host_rx) = mpsc::unbounded_channel::<Event>();
 
     tokio::spawn(async move {
-        while let Some(event) = dlq_rx.recv().await {
-            tracing::warn!(
-                topic = %event.meta.topic,
-                id    = %event.meta.id,
-                "[DLQ] undelivered event"
-            );
+        while let Some(ev) = dlq_rx.recv().await {
+            tracing::warn!(topic = %ev.meta.topic, id = %ev.meta.id, "[DLQ]");
         }
     });
 
-    // ── подписка хоста на входящие сообщения и историю ───────────────────
-    let (host_tx, mut host_rx) = mpsc::unbounded_channel::<Event>();
-    let host_tx_clone = host_tx.clone();
-
     tokio::spawn(async move {
-        while let Some(event) = host_rx.recv().await {
-            match event.meta.topic.as_str() {
-                t if t == CRYPTO_DECRYPTED => {
-                    match String::from_utf8(event.payload.clone()) {
+        while let Some(ev) = host_rx.recv().await {
+            match ev.meta.topic.as_str() {
+                t if t == TOPIC_CRYPTO_DECRYPTED => {
+                    match String::from_utf8(ev.payload.clone()) {
                         Ok(msg) => println!("\n[incoming] {}", msg),
-                        Err(_)  => println!("\n[incoming] <binary {} bytes>", event.payload.len()),
+                        Err(_)  => println!("\n[incoming] <binary {} bytes>", ev.payload.len()),
                     }
                 }
-                t if t == DB_HISTORY_RESULT => {
-                    match serde_json::from_slice::<serde_json::Value>(&event.payload) {
-                        Ok(arr) => {
-                            println!("\n── history ──");
-                            if let Some(messages) = arr.as_array() {
-                                if messages.is_empty() {
-                                    println!("  (empty)");
-                                }
-                                for msg in messages {
-                                    let ts = msg["ts"].as_u64().unwrap_or(0);
-                                    let payload_b64 = msg["payload"].as_array();
-                                    if let Some(bytes_arr) = payload_b64 {
-                                        let bytes: Vec<u8> = bytes_arr
-                                            .iter()
-                                            .filter_map(|v| v.as_u64().map(|n| n as u8))
-                                            .collect();
-                                        match String::from_utf8(bytes) {
-                                            Ok(text) => println!("  [{ts}] {text}"),
-                                            Err(_)   => println!("  [{ts}] <binary>"),
-                                        }
-                                    }
-                                }
-                            }
-                            println!("─────────────");
-                        }
-                        Err(_) => println!("[history] failed to parse"),
-                    }
+                t if t == TOPIC_DB_HISTORY_RESULT => {
+                    print_history(&ev.payload);
                 }
                 _ => {}
             }
         }
     });
 
-    // ── supervisor ────────────────────────────────────────────────────────
     let mut supervisor = Supervisor::new(
         Arc::clone(&runtime),
         global_tx.clone(),
         dlq_tx,
     );
 
-    // регистрируем хост как виртуальный подписчик
-    supervisor.register_host_subscriber(
-        vec![CRYPTO_DECRYPTED.to_string(), DB_HISTORY_RESULT.to_string()],
-        host_tx_clone,
+    supervisor.subscribe_host(
+        &[TOPIC_CRYPTO_DECRYPTED.to_string(), TOPIC_DB_HISTORY_RESULT.to_string()],
+        host_tx,
     );
 
     let manifest_files = [
@@ -177,25 +138,25 @@ async fn main() -> Result<()> {
                 match std::fs::read(&wasm_path) {
                     Ok(bytes) => {
                         if let Err(e) = supervisor.load_plugin(manifest, bytes).await {
-                            error!(manifest = %path, error = %e, "failed to load plugin");
+                            tracing::error!(manifest = %path, error = %e, "load failed");
                         }
                     }
-                    Err(e) => error!(wasm = %wasm_path, error = %e, "failed to read wasm"),
+                    Err(e) => tracing::error!(wasm = %wasm_path, error = %e, "read failed"),
                 }
             }
-            Err(e) => error!(manifest = %path, error = %e, "failed to parse manifest"),
+            Err(e) => tracing::error!(manifest = %path, error = %e, "parse failed"),
         }
     }
 
     supervisor.start_routing(global_rx);
-    let _watcher = supervisor.start_hot_swap_watcher().ok();
+    let _watcher = supervisor.start_hot_swap(HotSwapConfig::default()).ok();
 
     let startup_payload = serde_json::to_vec(&serde_json::json!({
         "chat_id": args.chat_id
     }))?;
 
     let _ = global_tx.send(Event {
-        meta:    EventMeta::new(SYS_STARTUP),
+        meta:    EventMeta::new(TOPIC_SYS_STARTUP),
         payload: startup_payload,
     });
 
@@ -213,13 +174,13 @@ async fn main() -> Result<()> {
             "/quit" => break,
             "/history" => {
                 let _ = global_tx2.send(Event {
-                    meta:    EventMeta::new(DB_READ_CMD),
+                    meta:    EventMeta::new(TOPIC_DB_READ_CMD),
                     payload: vec![],
                 });
             }
             msg => {
                 let _ = global_tx2.send(Event {
-                    meta:    EventMeta::new(UI_SEND_MSG),
+                    meta:    EventMeta::new(TOPIC_UI_SEND_MSG),
                     payload: msg.as_bytes().to_vec(),
                 });
             }
@@ -228,4 +189,33 @@ async fn main() -> Result<()> {
 
     info!("shutting down");
     Ok(())
+}
+
+fn print_history(payload: &[u8]) {
+    match serde_json::from_slice::<serde_json::Value>(payload) {
+        Ok(arr) => {
+            println!("\n── history ──");
+            if let Some(messages) = arr.as_array() {
+                if messages.is_empty() {
+                    println!("  (empty)");
+                }
+                for msg in messages {
+                    let ts      = msg["ts"].as_u64().unwrap_or(0);
+                    let payload = msg["payload"].as_array();
+                    if let Some(bytes_arr) = payload {
+                        let bytes: Vec<u8> = bytes_arr
+                            .iter()
+                            .filter_map(|v| v.as_u64().map(|n| n as u8))
+                            .collect();
+                        match String::from_utf8(bytes) {
+                            Ok(text) => println!("  [{ts}] {text}"),
+                            Err(_)   => println!("  [{ts}] <binary>"),
+                        }
+                    }
+                }
+            }
+            println!("─────────────");
+        }
+        Err(_) => println!("[history] parse failed"),
+    }
 }

@@ -1,5 +1,9 @@
-pub mod bus;
 pub mod engine;
+pub mod event;
+pub mod hotswap;
 pub mod manifest;
+pub mod registry;
+pub mod router;
 pub mod signing;
 pub mod supervisor;
+pub mod worker;

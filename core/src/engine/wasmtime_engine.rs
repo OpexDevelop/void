@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -7,8 +8,8 @@ use wasmtime::{Caller, Config, Engine, Instance, Linker, Module, ResourceLimiter
 use wasmtime_wasi::preview1::WasiP1Ctx;
 use wasmtime_wasi::{DirPerms, FilePerms, WasiCtxBuilder};
 
-use crate::bus::{Event, EventMeta, NET_RECEIVED};
-use super::{LinkerConfig, PluginInstance, PluginRuntime};
+use crate::event::{Event, EventMeta};
+use super::{HostContext, PluginInstance, PluginRuntime};
 
 const FUEL_LIMIT:   u64   = 50_000_000;
 const MEMORY_LIMIT: usize = 50 * 1024 * 1024;
@@ -57,10 +58,16 @@ fn read_bytes(data: &[u8], ptr: i32, len: i32) -> Option<Vec<u8>> {
 async fn sse_loop(url: String, tx: mpsc::UnboundedSender<Event>) {
     tracing::info!(url = %url, "SSE stream starting");
     loop {
-        let client = reqwest::Client::builder()
+        let client = match reqwest::Client::builder()
             .timeout(Duration::from_secs(300))
             .build()
-            .unwrap_or_default();
+        {
+            Ok(c)  => c,
+            Err(e) => {
+                tracing::error!(error = %e, "failed to build reqwest client");
+                return;
+            }
+        };
 
         let response = match client
             .get(&url)
@@ -68,7 +75,7 @@ async fn sse_loop(url: String, tx: mpsc::UnboundedSender<Event>) {
             .send()
             .await
         {
-            Ok(r) => r,
+            Ok(r)  => r,
             Err(e) => {
                 tracing::warn!(error = %e, "SSE connect failed, retry in 5s");
                 tokio::time::sleep(Duration::from_secs(5)).await;
@@ -77,13 +84,13 @@ async fn sse_loop(url: String, tx: mpsc::UnboundedSender<Event>) {
         };
 
         let mut stream = response.bytes_stream();
-        let mut buf = String::new();
+        let mut buf    = String::new();
 
         while let Some(chunk) = stream.next().await {
             match chunk {
                 Ok(bytes) => {
                     let text = match std::str::from_utf8(&bytes) {
-                        Ok(t) => t,
+                        Ok(t)  => t,
                         Err(_) => continue,
                     };
                     buf.push_str(text);
@@ -97,10 +104,9 @@ async fn sse_loop(url: String, tx: mpsc::UnboundedSender<Event>) {
                                 if data.trim().is_empty() || data.trim() == "{}" {
                                     continue;
                                 }
-                                let payload = data.as_bytes().to_vec();
                                 let event = Event {
-                                    meta:    EventMeta::new(NET_RECEIVED),
-                                    payload,
+                                    meta:    EventMeta::new("NET_RECEIVED"),
+                                    payload: data.as_bytes().to_vec(),
                                 };
                                 if tx.send(event).is_err() {
                                     tracing::warn!("SSE: event bus closed");
@@ -123,42 +129,44 @@ async fn sse_loop(url: String, tx: mpsc::UnboundedSender<Event>) {
 }
 
 impl PluginRuntime for WasmtimeRuntime {
-    fn instantiate(&self, wasm_bytes: &[u8], cfg: LinkerConfig) -> Result<Box<dyn PluginInstance>> {
+    fn instantiate(&self, wasm_bytes: &[u8], ctx: HostContext) -> Result<Box<dyn PluginInstance>> {
         let module = Module::new(&self.engine, wasm_bytes)?;
         let mut linker: Linker<HostState> = Linker::new(&self.engine);
 
         wasmtime_wasi::preview1::add_to_linker_sync(&mut linker, |s: &mut HostState| &mut s.wasi)?;
 
         {
-            let tx = cfg.event_tx.clone();
+            let tx = ctx.event_tx.clone();
             linker.func_wrap(
                 "env", "emit_event",
                 move |mut caller: Caller<'_, HostState>,
                       topic_ptr: i32, topic_len: i32,
                       payload_ptr: i32, payload_len: i32| {
                     let mem = match caller.get_export("memory").and_then(|e| e.into_memory()) {
-                        Some(m) => m, None => return,
+                        Some(m) => m,
+                        None    => return,
                     };
                     let data    = mem.data(&caller);
-                    let topic   = match read_str(data, topic_ptr, topic_len) { Some(t) => t, None => return };
+                    let topic   = match read_str(data, topic_ptr, topic_len)   { Some(t) => t, None => return };
                     let payload = match read_bytes(data, payload_ptr, payload_len) { Some(p) => p, None => return };
                     let _ = tx.send(Event { meta: EventMeta::new(&topic), payload });
                 },
             )?;
         }
 
-        if cfg.manifest.permissions.network {
+        if ctx.permissions.network {
             linker.func_wrap(
                 "env", "host_http_post",
                 |mut caller: Caller<'_, HostState>,
                  url_ptr: i32, url_len: i32,
                  body_ptr: i32, body_len: i32| -> i32 {
                     let mem = match caller.get_export("memory").and_then(|e| e.into_memory()) {
-                        Some(m) => m, None => return -1,
+                        Some(m) => m,
+                        None    => return -1,
                     };
                     let data = mem.data(&caller);
-                    let url  = match read_str(data, url_ptr, url_len) { Some(u) => u, None => return -1 };
-                    let body = match read_bytes(data, body_ptr, body_len) { Some(b) => b, None => return -1 };
+                    let url  = match read_str(data, url_ptr, url_len)       { Some(u) => u, None => return -1 };
+                    let body = match read_bytes(data, body_ptr, body_len)   { Some(b) => b, None => return -1 };
                     tokio::spawn(async move {
                         let client = reqwest::Client::new();
                         match client
@@ -168,8 +176,8 @@ impl PluginRuntime for WasmtimeRuntime {
                             .send()
                             .await
                         {
-                            Ok(resp)  => tracing::info!(url = %url, status = %resp.status(), "http_post ok"),
-                            Err(e)    => tracing::error!(url = %url, error = %e, "http_post failed"),
+                            Ok(r)  => tracing::info!(url = %url, status = %r.status(), "http_post ok"),
+                            Err(e) => tracing::error!(url = %url, error = %e, "http_post failed"),
                         }
                     });
                     0
@@ -177,20 +185,19 @@ impl PluginRuntime for WasmtimeRuntime {
             )?;
 
             {
-                let tx = cfg.event_tx.clone();
+                let tx = ctx.event_tx.clone();
                 linker.func_wrap(
                     "env", "host_sse_start",
                     move |mut caller: Caller<'_, HostState>,
                           url_ptr: i32, url_len: i32| -> i32 {
                         let mem = match caller.get_export("memory").and_then(|e| e.into_memory()) {
-                            Some(m) => m, None => return -1,
+                            Some(m) => m,
+                            None    => return -1,
                         };
                         let data = mem.data(&caller);
                         let url  = match read_str(data, url_ptr, url_len) { Some(u) => u, None => return -1 };
                         let tx2  = tx.clone();
-                        tokio::spawn(async move {
-                            sse_loop(url, tx2).await;
-                        });
+                        tokio::spawn(async move { sse_loop(url, tx2).await; });
                         0
                     },
                 )?;
@@ -200,8 +207,8 @@ impl PluginRuntime for WasmtimeRuntime {
         let mut ctx_builder = WasiCtxBuilder::new();
         ctx_builder.inherit_stdio();
 
-        if cfg.manifest.permissions.filesystem {
-            for dir in &cfg.manifest.permissions.allowed_dirs {
+        if ctx.permissions.filesystem {
+            for dir in &ctx.permissions.allowed_dirs {
                 std::fs::create_dir_all(dir)?;
                 ctx_builder.preopened_dir(dir, ".", DirPerms::all(), FilePerms::all())?;
             }
@@ -209,7 +216,7 @@ impl PluginRuntime for WasmtimeRuntime {
 
         let host_state = HostState {
             wasi:     ctx_builder.build_p1(),
-            event_tx: cfg.event_tx,
+            event_tx: ctx.event_tx,
             limiter:  PluginLimiter { memory_limit: MEMORY_LIMIT },
         };
 
@@ -249,12 +256,17 @@ impl PluginInstance for WasmtimeInstance {
             .map_err(|e| e.to_string())?;
 
         let result = handle
-            .call(&mut self.store, (meta_ptr, meta_json.len() as i32, payload_ptr, payload.len() as i32))
+            .call(&mut self.store, (
+                meta_ptr,    meta_json.len() as i32,
+                payload_ptr, payload.len()   as i32,
+            ))
             .map_err(|e| e.to_string())?;
 
-        if let Ok(dealloc) = self.instance.get_typed_func::<(i32, i32), ()>(&mut self.store, "dealloc") {
+        if let Ok(dealloc) = self.instance
+            .get_typed_func::<(i32, i32), ()>(&mut self.store, "dealloc")
+        {
             let _ = dealloc.call(&mut self.store, (meta_ptr,    meta_json.len() as i32));
-            let _ = dealloc.call(&mut self.store, (payload_ptr, payload.len() as i32));
+            let _ = dealloc.call(&mut self.store, (payload_ptr, payload.len()   as i32));
         }
 
         if result == 0 { Ok(()) } else { Err(format!("plugin error code {result}")) }

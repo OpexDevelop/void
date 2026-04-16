@@ -2,8 +2,8 @@ use anyhow::Result;
 use wasmi::{Engine, Instance, Linker, Module, Store};
 use tokio::sync::mpsc;
 
-use crate::bus::{Event, EventMeta};
-use super::{LinkerConfig, PluginInstance, PluginRuntime};
+use crate::event::{Event, EventMeta};
+use super::{HostContext, PluginInstance, PluginRuntime};
 
 struct HostState {
     event_tx: mpsc::UnboundedSender<Event>,
@@ -18,34 +18,40 @@ impl WasmiRuntime {
 }
 
 impl PluginRuntime for WasmiRuntime {
-    fn instantiate(&self, wasm_bytes: &[u8], cfg: LinkerConfig) -> Result<Box<dyn PluginInstance>> {
+    fn instantiate(&self, wasm_bytes: &[u8], ctx: HostContext) -> Result<Box<dyn PluginInstance>> {
         let module     = Module::new(&self.engine, wasm_bytes)?;
-        let host_state = HostState { event_tx: cfg.event_tx.clone() };
+        let host_state = HostState { event_tx: ctx.event_tx.clone() };
         let mut store: Store<HostState> = Store::new(&self.engine, host_state);
         let mut linker = Linker::<HostState>::new(&self.engine);
 
-        let tx = cfg.event_tx.clone();
-        linker.func_wrap(
-            "env", "emit_event",
-            move |mut caller: wasmi::Caller<'_, HostState>,
-                  topic_ptr: i32, topic_len: i32,
-                  payload_ptr: i32, payload_len: i32| {
-                let mem = match caller.get_export("memory").and_then(|e| e.into_memory()) {
-                    Some(m) => m, None => return,
-                };
-                let data    = mem.data(caller.as_context());
-                let t_s = topic_ptr as usize;
-                let t_e = t_s + topic_len as usize;
-                let p_s = payload_ptr as usize;
-                let p_e = p_s + payload_len as usize;
-                if t_e > data.len() || p_e > data.len() { return; }
-                let topic   = match std::str::from_utf8(&data[t_s..t_e]) { Ok(s) => s.to_string(), Err(_) => return };
-                let payload = data[p_s..p_e].to_vec();
-                let _ = tx.send(Event { meta: EventMeta::new(&topic), payload });
-            },
-        )?;
+        {
+            let tx = ctx.event_tx.clone();
+            linker.func_wrap(
+                "env", "emit_event",
+                move |mut caller: wasmi::Caller<'_, HostState>,
+                      topic_ptr: i32, topic_len: i32,
+                      payload_ptr: i32, payload_len: i32| {
+                    let mem = match caller.get_export("memory").and_then(|e| e.into_memory()) {
+                        Some(m) => m,
+                        None    => return,
+                    };
+                    let data = mem.data(caller.as_context());
+                    let t_s  = topic_ptr   as usize;
+                    let t_e  = t_s + topic_len   as usize;
+                    let p_s  = payload_ptr as usize;
+                    let p_e  = p_s + payload_len as usize;
+                    if t_e > data.len() || p_e > data.len() { return; }
+                    let topic = match std::str::from_utf8(&data[t_s..t_e]) {
+                        Ok(s)  => s.to_string(),
+                        Err(_) => return,
+                    };
+                    let payload = data[p_s..p_e].to_vec();
+                    let _ = tx.send(Event { meta: EventMeta::new(&topic), payload });
+                },
+            )?;
+        }
 
-        if cfg.manifest.permissions.network {
+        if ctx.permissions.network {
             linker.func_wrap("env", "host_http_post",
                 |_: wasmi::Caller<'_, HostState>, _: i32, _: i32, _: i32, _: i32| -> i32 { 0 })?;
             linker.func_wrap("env", "host_sse_start",
@@ -83,12 +89,17 @@ impl PluginInstance for WasmiInstance {
             .map_err(|e| e.to_string())?;
 
         let result = handle
-            .call(&mut self.store, (meta_ptr, meta_json.len() as i32, payload_ptr, payload.len() as i32))
+            .call(&mut self.store, (
+                meta_ptr,    meta_json.len() as i32,
+                payload_ptr, payload.len()   as i32,
+            ))
             .map_err(|e| e.to_string())?;
 
-        if let Ok(dealloc) = self.instance.get_typed_func::<(i32, i32), ()>(&self.store, "dealloc") {
+        if let Ok(dealloc) = self.instance
+            .get_typed_func::<(i32, i32), ()>(&self.store, "dealloc")
+        {
             let _ = dealloc.call(&mut self.store, (meta_ptr,    meta_json.len() as i32));
-            let _ = dealloc.call(&mut self.store, (payload_ptr, payload.len() as i32));
+            let _ = dealloc.call(&mut self.store, (payload_ptr, payload.len()   as i32));
         }
 
         if result == 0 { Ok(()) } else { Err(format!("wasmi plugin error {result}")) }
