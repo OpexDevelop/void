@@ -17,11 +17,17 @@ struct PluginEntry {
     tx:         mpsc::Sender<Event>,
 }
 
+struct HostEntry {
+    subscriptions: Vec<String>,
+    tx:            mpsc::UnboundedSender<Event>,
+}
+
 pub struct Supervisor {
-    runtime:   Arc<dyn PluginRuntime>,
-    global_tx: mpsc::UnboundedSender<Event>,
-    dlq_tx:    mpsc::UnboundedSender<Event>,
-    plugins:   Vec<PluginEntry>,
+    runtime:      Arc<dyn PluginRuntime>,
+    global_tx:    mpsc::UnboundedSender<Event>,
+    dlq_tx:       mpsc::UnboundedSender<Event>,
+    plugins:      Vec<PluginEntry>,
+    host_subs:    Vec<HostEntry>,
 }
 
 impl Supervisor {
@@ -30,7 +36,21 @@ impl Supervisor {
         global_tx: mpsc::UnboundedSender<Event>,
         dlq_tx:    mpsc::UnboundedSender<Event>,
     ) -> Self {
-        Self { runtime, global_tx, dlq_tx, plugins: Vec::new() }
+        Self {
+            runtime,
+            global_tx,
+            dlq_tx,
+            plugins:   Vec::new(),
+            host_subs: Vec::new(),
+        }
+    }
+
+    pub fn register_host_subscriber(
+        &mut self,
+        subscriptions: Vec<String>,
+        tx:            mpsc::UnboundedSender<Event>,
+    ) {
+        self.host_subs.push(HostEntry { subscriptions, tx });
     }
 
     pub async fn load_plugin(
@@ -57,10 +77,16 @@ impl Supervisor {
     }
 
     pub fn start_routing(&self, mut global_rx: mpsc::UnboundedReceiver<Event>) {
-        let routes: Vec<(Vec<String>, mpsc::Sender<Event>)> = self
+        let plugin_routes: Vec<(Vec<String>, mpsc::Sender<Event>)> = self
             .plugins
             .iter()
             .map(|p| (p.manifest.events.subscriptions.clone(), p.tx.clone()))
+            .collect();
+
+        let host_routes: Vec<(Vec<String>, mpsc::UnboundedSender<Event>)> = self
+            .host_subs
+            .iter()
+            .map(|h| (h.subscriptions.clone(), h.tx.clone()))
             .collect();
 
         let dlq_tx = self.dlq_tx.clone();
@@ -70,7 +96,8 @@ impl Supervisor {
                 debug!(topic = %event.meta.topic, id = %event.meta.id, "routing");
 
                 let mut routed = false;
-                for (subs, tx) in &routes {
+
+                for (subs, tx) in &plugin_routes {
                     if subs.iter().any(|s| s == &event.meta.topic) {
                         routed = true;
                         match tx.try_send(event.clone()) {
@@ -83,6 +110,13 @@ impl Supervisor {
                                 warn!(topic = %event.meta.topic, "plugin channel closed");
                             }
                         }
+                    }
+                }
+
+                for (subs, tx) in &host_routes {
+                    if subs.iter().any(|s| s == &event.meta.topic) {
+                        routed = true;
+                        let _ = tx.send(event.clone());
                     }
                 }
 
@@ -169,12 +203,6 @@ async fn plugin_worker_loop(
 ) {
     let id = manifest.plugin.id.clone();
 
-    // ┌─────────────────────────────────────────────────────────────────────┐
-    // │ FIX: wasmtime-wasi preview1 sync bridge вызывает Handle::block_on   │
-    // │ внутри async-задачи → panic.                                         │
-    // │ block_in_place сигнализирует планировщику "этот поток будет блокирован│
-    // │ — мигрируй другие задачи", что позволяет block_on работать без panic. │
-    // └─────────────────────────────────────────────────────────────────────┘
     let make_instance = || {
         let rt    = Arc::clone(&runtime);
         let bytes = wasm_bytes.clone();
@@ -212,8 +240,6 @@ async fn plugin_worker_loop(
 
         let fuel_before = instance.fuel_consumed();
 
-        // FIX: любой WASI syscall (fs read/write/rename) идёт через sync bridge
-        // → без block_in_place storage падает на первом же обращении к диску
         let handle_result = tokio::task::block_in_place(|| {
             instance.handle_event(&meta_json, &event.payload)
         });

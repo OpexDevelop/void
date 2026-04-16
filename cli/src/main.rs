@@ -6,7 +6,10 @@ use tokio::sync::mpsc;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
-use void_core::bus::{Event, EventMeta, DB_READ_CMD, SYS_STARTUP, UI_SEND_MSG};
+use void_core::bus::{
+    Event, EventMeta, CRYPTO_DECRYPTED, DB_HISTORY_RESULT, DB_READ_CMD,
+    SYS_STARTUP, UI_SEND_MSG,
+};
 use void_core::manifest::PluginManifest;
 use void_core::supervisor::Supervisor;
 
@@ -17,9 +20,7 @@ use void_core::engine::wasmtime_engine::WasmtimeRuntime;
 use void_core::engine::wasmi_engine::WasmiRuntime;
 
 struct CliArgs {
-    /// ntfy topic — передаётся в plugin-ntfy через SYS_STARTUP payload
     chat_id:       String,
-    /// директория с манифестами (по умолчанию "manifests")
     manifests_dir: String,
 }
 
@@ -34,21 +35,23 @@ impl CliArgs {
             match args[i].as_str() {
                 "--chat" => {
                     i += 1;
-                    chat_id = args.get(i)
-                        .cloned()
-                        .unwrap_or_else(|| { eprintln!("--chat requires a value"); std::process::exit(1); });
+                    chat_id = args.get(i).cloned().unwrap_or_else(|| {
+                        eprintln!("--chat requires a value");
+                        std::process::exit(1);
+                    });
                 }
                 "--manifests" => {
                     i += 1;
-                    manifests_dir = args.get(i)
-                        .cloned()
-                        .unwrap_or_else(|| { eprintln!("--manifests requires a value"); std::process::exit(1); });
+                    manifests_dir = args.get(i).cloned().unwrap_or_else(|| {
+                        eprintln!("--manifests requires a value");
+                        std::process::exit(1);
+                    });
                 }
                 "--help" | "-h" => {
                     println!("void [--chat <id>] [--manifests <dir>]");
                     println!();
-                    println!("  --chat <id>        ntfy topic / chat room  (default: wasm-messenger)");
-                    println!("  --manifests <dir>  manifest directory       (default: manifests)");
+                    println!("  --chat <id>        ntfy topic  (default: wasm-messenger)");
+                    println!("  --manifests <dir>  manifest dir (default: manifests)");
                     println!();
                     println!("REPL commands:");
                     println!("  /history   show stored history");
@@ -73,7 +76,7 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new("void=debug,core=debug,warn")),
+                .unwrap_or_else(|_| EnvFilter::new("void=debug,void_core=debug,warn")),
         )
         .init();
 
@@ -81,14 +84,14 @@ async fn main() -> Result<()> {
 
     info!(chat = %args.chat_id, "void starting");
 
-    // ── runtime ───────────────────────────────────────────────────────────
     #[cfg(feature = "wasmtime-backend")]
-    let runtime: Arc<dyn void_core::engine::PluginRuntime> = Arc::new(WasmtimeRuntime::new()?);
+    let runtime: Arc<dyn void_core::engine::PluginRuntime> =
+        Arc::new(WasmtimeRuntime::new()?);
 
     #[cfg(all(feature = "wasmi-backend", not(feature = "wasmtime-backend")))]
-    let runtime: Arc<dyn void_core::engine::PluginRuntime> = Arc::new(WasmiRuntime::new()?);
+    let runtime: Arc<dyn void_core::engine::PluginRuntime> =
+        Arc::new(WasmiRuntime::new()?);
 
-    // ── каналы ────────────────────────────────────────────────────────────
     let (global_tx, global_rx) = mpsc::unbounded_channel::<Event>();
     let (dlq_tx, mut dlq_rx)   = mpsc::unbounded_channel::<Event>();
 
@@ -102,8 +105,64 @@ async fn main() -> Result<()> {
         }
     });
 
-    // ── загрузка плагинов ─────────────────────────────────────────────────
-    let mut supervisor = Supervisor::new(Arc::clone(&runtime), global_tx.clone(), dlq_tx);
+    // ── подписка хоста на входящие сообщения и историю ───────────────────
+    let (host_tx, mut host_rx) = mpsc::unbounded_channel::<Event>();
+    let host_tx_clone = host_tx.clone();
+
+    tokio::spawn(async move {
+        while let Some(event) = host_rx.recv().await {
+            match event.meta.topic.as_str() {
+                t if t == CRYPTO_DECRYPTED => {
+                    match String::from_utf8(event.payload.clone()) {
+                        Ok(msg) => println!("\n[incoming] {}", msg),
+                        Err(_)  => println!("\n[incoming] <binary {} bytes>", event.payload.len()),
+                    }
+                }
+                t if t == DB_HISTORY_RESULT => {
+                    match serde_json::from_slice::<serde_json::Value>(&event.payload) {
+                        Ok(arr) => {
+                            println!("\n── history ──");
+                            if let Some(messages) = arr.as_array() {
+                                if messages.is_empty() {
+                                    println!("  (empty)");
+                                }
+                                for msg in messages {
+                                    let ts = msg["ts"].as_u64().unwrap_or(0);
+                                    let payload_b64 = msg["payload"].as_array();
+                                    if let Some(bytes_arr) = payload_b64 {
+                                        let bytes: Vec<u8> = bytes_arr
+                                            .iter()
+                                            .filter_map(|v| v.as_u64().map(|n| n as u8))
+                                            .collect();
+                                        match String::from_utf8(bytes) {
+                                            Ok(text) => println!("  [{ts}] {text}"),
+                                            Err(_)   => println!("  [{ts}] <binary>"),
+                                        }
+                                    }
+                                }
+                            }
+                            println!("─────────────");
+                        }
+                        Err(_) => println!("[history] failed to parse"),
+                    }
+                }
+                _ => {}
+            }
+        }
+    });
+
+    // ── supervisor ────────────────────────────────────────────────────────
+    let mut supervisor = Supervisor::new(
+        Arc::clone(&runtime),
+        global_tx.clone(),
+        dlq_tx,
+    );
+
+    // регистрируем хост как виртуальный подписчик
+    supervisor.register_host_subscriber(
+        vec![CRYPTO_DECRYPTED.to_string(), DB_HISTORY_RESULT.to_string()],
+        host_tx_clone,
+    );
 
     let manifest_files = [
         format!("{}/crypto.toml",  args.manifests_dir),
@@ -131,7 +190,6 @@ async fn main() -> Result<()> {
     supervisor.start_routing(global_rx);
     let _watcher = supervisor.start_hot_swap_watcher().ok();
 
-    // ── SYS_STARTUP: кладём chat_id в payload → plugin-ntfy прочитает ─────
     let startup_payload = serde_json::to_vec(&serde_json::json!({
         "chat_id": args.chat_id
     }))?;
@@ -143,7 +201,6 @@ async fn main() -> Result<()> {
 
     info!("ready  |  chat: {}  |  /history  /quit  <message>", args.chat_id);
 
-    // ── REPL ──────────────────────────────────────────────────────────────
     let stdin      = io::stdin();
     let global_tx2 = global_tx.clone();
 
