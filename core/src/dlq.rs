@@ -1,8 +1,7 @@
 use std::path::PathBuf;
-use std::sync::Arc;
 
-use tokio::sync::mpsc;
 use tokio::io::AsyncWriteExt;
+use tokio::sync::mpsc;
 use tracing::{error, warn};
 
 use crate::event::Event;
@@ -40,10 +39,9 @@ pub fn spawn(config: DlqConfig) -> mpsc::UnboundedSender<Event> {
             .await;
 
         let mut file = match file {
-            Ok(f)  => f,
+            Ok(f) => f,
             Err(e) => {
                 error!(error = %e, path = ?config.path, "DLQ file open failed");
-                // fallback: только логируем
                 while let Some(ev) = rx.recv().await {
                     warn!(topic = %ev.meta.topic, id = %ev.meta.id, "[DLQ] lost event");
                 }

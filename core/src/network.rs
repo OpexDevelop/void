@@ -1,7 +1,6 @@
 use std::time::Duration;
 
 use futures_util::StreamExt;
-use tokio::sync::mpsc;
 
 use crate::event::{BusTx, Event, EventMeta};
 
