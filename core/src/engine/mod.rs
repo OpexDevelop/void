@@ -1,4 +1,5 @@
 use anyhow::Result;
+use async_trait::async_trait;
 use std::path::PathBuf;
 
 use crate::event::BusTx;
@@ -21,6 +22,7 @@ pub struct HostContext {
     pub permissions: Permissions,
 }
 
+#[async_trait]
 pub trait PluginRuntime: Send + Sync + 'static {
     async fn instantiate(
         &self,
@@ -29,6 +31,7 @@ pub trait PluginRuntime: Send + Sync + 'static {
     ) -> Result<Box<dyn PluginInstance>>;
 }
 
+#[async_trait]
 pub trait PluginInstance: Send {
     async fn handle_event(&mut self, meta_json: &[u8], payload: &[u8]) -> Result<(), String>;
     fn fuel_consumed(&self) -> u64;

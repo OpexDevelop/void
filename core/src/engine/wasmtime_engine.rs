@@ -1,4 +1,5 @@
 use anyhow::Result;
+use async_trait::async_trait;
 use wasmtime::{
     component::{bindgen, Component, Linker as ComponentLinker},
     Config, Engine, Store,
@@ -25,8 +26,8 @@ struct HostState {
 }
 
 impl WasiView for HostState {
-    fn ctx(&mut self)   -> &mut WasiCtx       { &mut self.wasi  }
-    fn table(&mut self) -> &mut ResourceTable  { &mut self.table }
+    fn ctx(&mut self)   -> &mut WasiCtx      { &mut self.wasi  }
+    fn table(&mut self) -> &mut ResourceTable { &mut self.table }
 }
 
 impl NetworkPluginWorldImports for HostState {
@@ -63,6 +64,7 @@ impl WasmtimeRuntime {
     }
 }
 
+#[async_trait]
 impl PluginRuntime for WasmtimeRuntime {
     async fn instantiate(&self, wasm_bytes: &[u8], ctx: HostContext) -> Result<Box<dyn PluginInstance>> {
         let component = Component::new(&self.engine, wasm_bytes)?;
@@ -111,6 +113,7 @@ pub struct WasmtimeInstance {
     initial_fuel: u64,
 }
 
+#[async_trait]
 impl PluginInstance for WasmtimeInstance {
     async fn handle_event(&mut self, meta_json: &[u8], payload: &[u8]) -> Result<(), String> {
         let meta: crate::event::EventMeta = serde_json::from_slice(meta_json)

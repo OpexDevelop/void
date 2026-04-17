@@ -1,4 +1,5 @@
 use anyhow::Result;
+use async_trait::async_trait;
 use wasmi::{Engine, Instance, Linker, Module, Store};
 use tokio::sync::mpsc;
 
@@ -17,6 +18,7 @@ impl WasmiRuntime {
     }
 }
 
+#[async_trait]
 impl PluginRuntime for WasmiRuntime {
     async fn instantiate(&self, wasm_bytes: &[u8], ctx: HostContext) -> Result<Box<dyn PluginInstance>> {
         let module     = Module::new(&self.engine, wasm_bytes)?;
@@ -36,12 +38,15 @@ impl PluginRuntime for WasmiRuntime {
                         None    => return,
                     };
                     let data = mem.data(caller.as_context());
-                    let t_s  = topic_ptr as usize;
-                    let t_e  = t_s + topic_len as usize;
+                    let t_s  = topic_ptr   as usize;
+                    let t_e  = t_s + topic_len   as usize;
                     let p_s  = payload_ptr as usize;
                     let p_e  = p_s + payload_len as usize;
                     if t_e > data.len() || p_e > data.len() { return; }
-                    let topic   = match std::str::from_utf8(&data[t_s..t_e]) { Ok(s) => s.to_string(), Err(_) => return };
+                    let topic = match std::str::from_utf8(&data[t_s..t_e]) {
+                        Ok(s)  => s.to_string(),
+                        Err(_) => return,
+                    };
                     let payload = data[p_s..p_e].to_vec();
                     let _ = tx.send(Event { meta: EventMeta::new(&topic), payload });
                 },
@@ -65,6 +70,7 @@ pub struct WasmiInstance {
     instance: Instance,
 }
 
+#[async_trait]
 impl PluginInstance for WasmiInstance {
     async fn handle_event(&mut self, meta_json: &[u8], payload: &[u8]) -> Result<(), String> {
         let alloc = self.instance
