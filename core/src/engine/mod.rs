@@ -22,7 +22,7 @@ pub struct HostContext {
 }
 
 pub trait PluginRuntime: Send + Sync + 'static {
-    fn instantiate(
+    async fn instantiate(
         &self,
         wasm_bytes: &[u8],
         ctx:        HostContext,
@@ -30,6 +30,6 @@ pub trait PluginRuntime: Send + Sync + 'static {
 }
 
 pub trait PluginInstance: Send {
-    fn handle_event(&mut self, meta_json: &[u8], payload: &[u8]) -> Result<(), String>;
+    async fn handle_event(&mut self, meta_json: &[u8], payload: &[u8]) -> Result<(), String>;
     fn fuel_consumed(&self) -> u64;
 }

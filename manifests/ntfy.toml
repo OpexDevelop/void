@@ -3,7 +3,7 @@ id        = "ntfy"
 version   = "1.0.0"
 sha256    = "0000000000000000000000000000000000000000000000000000000000000000"
 signature = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-wasm_path = "target/wasm32-wasip2/release/plugin_ntfy.component.wasm"
+wasm_path = "target/wasm32-wasip2/release/plugin_ntfy.wasm"
 
 [events]
 subscriptions  = ["SYS_STARTUP", "CRYPTO_ENCRYPTED", "NET_RECEIVED"]

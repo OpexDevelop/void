@@ -1,35 +1,54 @@
-use std::time::Duration;
-
 use anyhow::Result;
-use futures_util::StreamExt;
-use tokio::sync::mpsc;
 use wasmtime::{
-    component::{bindgen, Component, Linker as ComponentLinker, Val},
+    component::{bindgen, Component, Linker as ComponentLinker},
     Config, Engine, Store,
 };
-use wasmtime_wasi::{DirPerms, FilePerms, WasiCtxBuilder, WasiView};
-use wasmtime_wasi::preview2::WasiCtx;
+use wasmtime_wasi::{DirPerms, FilePerms, ResourceTable, WasiCtx, WasiCtxBuilder, WasiView};
 
 use crate::event::{BusTx, Event, EventMeta};
 use crate::network;
 use super::{HostContext, PluginInstance, PluginRuntime};
 
-const FUEL_LIMIT:   u64   = 50_000_000;
-const MEMORY_LIMIT: usize = 50 * 1024 * 1024;
+const FUEL_LIMIT: u64 = 50_000_000;
 
 bindgen!({
     path:  "wit/plugin.wit",
-    world: "plugin-world",
+    world: "network-plugin-world",
     async: true,
 });
 
 struct HostState {
-    wasi:     WasiCtx,
-    event_tx: BusTx,
+    wasi:        WasiCtx,
+    table:       ResourceTable,
+    event_tx:    BusTx,
+    permissions: super::Permissions,
 }
 
 impl WasiView for HostState {
-    fn ctx(&mut self) -> &mut WasiCtx { &mut self.wasi }
+    fn ctx(&mut self)   -> &mut WasiCtx       { &mut self.wasi  }
+    fn table(&mut self) -> &mut ResourceTable  { &mut self.table }
+}
+
+impl NetworkPluginWorldImports for HostState {
+    async fn emit_event(&mut self, topic: String, payload: Vec<u8>) -> wasmtime::Result<()> {
+        let _ = self.event_tx.send(Event {
+            meta:    EventMeta::new(topic),
+            payload,
+        }).await;
+        Ok(())
+    }
+
+    async fn host_http_post(&mut self, url: String, body: Vec<u8>) -> wasmtime::Result<i32> {
+        if !self.permissions.network { return Ok(-1); }
+        network::http_post(url, body).await;
+        Ok(0)
+    }
+
+    async fn host_sse_start(&mut self, url: String) -> wasmtime::Result<i32> {
+        if !self.permissions.network { return Ok(-1); }
+        tokio::spawn(network::sse_loop(url, self.event_tx.clone()));
+        Ok(0)
+    }
 }
 
 pub struct WasmtimeRuntime { engine: Engine }
@@ -45,64 +64,13 @@ impl WasmtimeRuntime {
 }
 
 impl PluginRuntime for WasmtimeRuntime {
-    fn instantiate(&self, wasm_bytes: &[u8], ctx: HostContext) -> Result<Box<dyn PluginInstance>> {
+    async fn instantiate(&self, wasm_bytes: &[u8], ctx: HostContext) -> Result<Box<dyn PluginInstance>> {
         let component = Component::new(&self.engine, wasm_bytes)?;
-
         let mut linker: ComponentLinker<HostState> = ComponentLinker::new(&self.engine);
-        wasmtime_wasi::preview2::command::add_to_linker(&mut linker)?;
 
-        // ── emit_event ────────────────────────────────────────────────────────
-        {
-            let tx = ctx.event_tx.clone();
-            linker.func_wrap_async(
-                "void:plugin/plugin-world",
-                "emit-event",
-                move |_store: wasmtime::StoreContextMut<'_, HostState>,
-                      (topic, payload): (String, Vec<u8>)| {
-                    let tx = tx.clone();
-                    Box::new(async move {
-                        let _ = tx.send(Event {
-                            meta:    EventMeta::new(topic),
-                            payload,
-                        }).await;
-                        Ok(())
-                    })
-                },
-            )?;
-        }
+        wasmtime_wasi::add_to_linker_async(&mut linker)?;
+        NetworkPluginWorld::add_to_linker(&mut linker, |state: &mut HostState| state)?;
 
-        // ── network (только если разрешено) ───────────────────────────────────
-        if ctx.permissions.network {
-            linker.func_wrap_async(
-                "void:plugin/network-plugin-world",
-                "host-http-post",
-                |_store: wasmtime::StoreContextMut<'_, HostState>,
-                 (url, body): (String, Vec<u8>)| {
-                    Box::new(async move {
-                        network::http_post(url, body).await;
-                        Ok((0i32,))
-                    })
-                },
-            )?;
-
-            {
-                let tx = ctx.event_tx.clone();
-                linker.func_wrap_async(
-                    "void:plugin/network-plugin-world",
-                    "host-sse-start",
-                    move |_store: wasmtime::StoreContextMut<'_, HostState>,
-                          (url,): (String,)| {
-                        let tx = tx.clone();
-                        Box::new(async move {
-                            tokio::spawn(network::sse_loop(url, tx));
-                            Ok((0i32,))
-                        })
-                    },
-                )?;
-            }
-        }
-
-        // ── WASI ──────────────────────────────────────────────────────────────
         let mut builder = WasiCtxBuilder::new();
         builder.inherit_stdio();
 
@@ -114,40 +82,50 @@ impl PluginRuntime for WasmtimeRuntime {
         }
 
         let host_state = HostState {
-            wasi:     builder.build(),
-            event_tx: ctx.event_tx,
+            wasi:        builder.build(),
+            table:       ResourceTable::new(),
+            event_tx:    ctx.event_tx,
+            permissions: ctx.permissions,
         };
 
         let mut store = Store::new(&self.engine, host_state);
         store.set_fuel(FUEL_LIMIT)?;
 
-        let (plugin, _) = PluginWorld::instantiate(&mut store, &component, &linker)?;
+        let (plugin, _) = NetworkPluginWorld::instantiate_async(
+            &mut store,
+            &component,
+            &linker,
+        ).await?;
 
-        Ok(Box::new(WasmtimeInstance { store, plugin, initial_fuel: FUEL_LIMIT }))
+        Ok(Box::new(WasmtimeInstance {
+            store,
+            plugin,
+            initial_fuel: FUEL_LIMIT,
+        }))
     }
 }
 
 pub struct WasmtimeInstance {
     store:        Store<HostState>,
-    plugin:       PluginWorld,
+    plugin:       NetworkPluginWorld,
     initial_fuel: u64,
 }
 
 impl PluginInstance for WasmtimeInstance {
-    fn handle_event(&mut self, meta_json: &[u8], payload: &[u8]) -> Result<(), String> {
+    async fn handle_event(&mut self, meta_json: &[u8], payload: &[u8]) -> Result<(), String> {
         let meta: crate::event::EventMeta = serde_json::from_slice(meta_json)
             .map_err(|e| e.to_string())?;
 
-        let wit_meta = EventMeta {
+        let wit_meta = void::plugin::types::EventMeta {
             id:        meta.id,
             topic:     meta.topic,
             version:   meta.version,
             timestamp: meta.timestamp,
         };
 
-        // async handle_event через block_on — мы в spawn_blocking потоке
-        let result = tokio::runtime::Handle::current()
-            .block_on(self.plugin.call_handle_event(&mut self.store, &wit_meta, payload))
+        let result = self.plugin
+            .call_handle_event(&mut self.store, &wit_meta, payload)
+            .await
             .map_err(|e| e.to_string())?;
 
         if result == 0 { Ok(()) } else { Err(format!("plugin error {result}")) }

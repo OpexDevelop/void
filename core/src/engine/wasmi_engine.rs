@@ -18,7 +18,7 @@ impl WasmiRuntime {
 }
 
 impl PluginRuntime for WasmiRuntime {
-    fn instantiate(&self, wasm_bytes: &[u8], ctx: HostContext) -> Result<Box<dyn PluginInstance>> {
+    async fn instantiate(&self, wasm_bytes: &[u8], ctx: HostContext) -> Result<Box<dyn PluginInstance>> {
         let module     = Module::new(&self.engine, wasm_bytes)?;
         let host_state = HostState { event_tx: ctx.event_tx.clone() };
         let mut store: Store<HostState> = Store::new(&self.engine, host_state);
@@ -36,15 +36,12 @@ impl PluginRuntime for WasmiRuntime {
                         None    => return,
                     };
                     let data = mem.data(caller.as_context());
-                    let t_s  = topic_ptr   as usize;
-                    let t_e  = t_s + topic_len   as usize;
+                    let t_s  = topic_ptr as usize;
+                    let t_e  = t_s + topic_len as usize;
                     let p_s  = payload_ptr as usize;
                     let p_e  = p_s + payload_len as usize;
                     if t_e > data.len() || p_e > data.len() { return; }
-                    let topic = match std::str::from_utf8(&data[t_s..t_e]) {
-                        Ok(s)  => s.to_string(),
-                        Err(_) => return,
-                    };
+                    let topic   = match std::str::from_utf8(&data[t_s..t_e]) { Ok(s) => s.to_string(), Err(_) => return };
                     let payload = data[p_s..p_e].to_vec();
                     let _ = tx.send(Event { meta: EventMeta::new(&topic), payload });
                 },
@@ -69,7 +66,7 @@ pub struct WasmiInstance {
 }
 
 impl PluginInstance for WasmiInstance {
-    fn handle_event(&mut self, meta_json: &[u8], payload: &[u8]) -> Result<(), String> {
+    async fn handle_event(&mut self, meta_json: &[u8], payload: &[u8]) -> Result<(), String> {
         let alloc = self.instance
             .get_typed_func::<i32, i32>(&self.store, "alloc")
             .map_err(|e| e.to_string())?;

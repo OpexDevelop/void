@@ -4,7 +4,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
-use crate::engine::{HostContext, PluginInstance, PluginRuntime, Permissions};
+use crate::engine::{HostContext, Permissions, PluginInstance, PluginRuntime};
 use crate::event::{BusTx, Event, SYS_SHUTDOWN};
 use crate::manifest::{PluginManifest, RestartPolicy};
 
@@ -23,10 +23,8 @@ pub fn spawn(
     global_tx: BusTx,
     dlq_tx:    mpsc::UnboundedSender<Event>,
 ) {
-    tokio::task::spawn_blocking(move || {
-        tokio::runtime::Handle::current().block_on(async move {
-            run(runtime, bytes, manifest, rx, global_tx, dlq_tx).await;
-        });
+    tokio::spawn(async move {
+        run(runtime, bytes, manifest, rx, global_tx, dlq_tx).await;
     });
 }
 
@@ -40,14 +38,12 @@ async fn run(
 ) {
     let id = manifest.plugin.id.clone();
 
-    let make_instance = || {
+    let mut instance: Box<dyn PluginInstance> = {
         let ctx = build_ctx(&manifest, global_tx.clone());
-        runtime.instantiate(&bytes, ctx)
-    };
-
-    let mut instance: Box<dyn PluginInstance> = match make_instance() {
-        Ok(i)  => i,
-        Err(e) => { error!(plugin = %id, error = %e, "instantiation failed"); return; }
+        match runtime.instantiate(&bytes, ctx).await {
+            Ok(i)  => i,
+            Err(e) => { error!(plugin = %id, error = %e, "instantiation failed"); return; }
+        }
     };
 
     let mut retries = 0u32;
@@ -68,7 +64,7 @@ async fn run(
         };
 
         let fuel_before = instance.fuel_consumed();
-        let result      = instance.handle_event(&meta_json, &event.payload);
+        let result      = instance.handle_event(&meta_json, &event.payload).await;
 
         match result {
             Ok(_) => {
@@ -90,7 +86,9 @@ async fn run(
                     let delay = backoff(retries);
                     warn!(plugin = %id, attempt = retries, delay_ms = delay.as_millis(), "restarting");
                     tokio::time::sleep(delay).await;
-                    match make_instance() {
+
+                    let ctx = build_ctx(&manifest, global_tx.clone());
+                    match runtime.instantiate(&bytes, ctx).await {
                         Ok(new) => { instance = new; }
                         Err(e2) => { error!(plugin = %id, error = %e2, "restart failed"); return; }
                     }

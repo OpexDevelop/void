@@ -1,6 +1,6 @@
 wit_bindgen::generate!({
     path:  "../../wit/plugin.wit",
-    world: "plugin-world",
+    world: "network-plugin-world",
 });
 
 use chacha20poly1305::{
