@@ -1,5 +1,5 @@
 wit_bindgen::generate!({
-    path:  "../../wit/plugin.wit",
+    path:  "../../core/wit/plugin.wit",
     world: "network-plugin-world",
 });
 
@@ -9,8 +9,14 @@ use serde::Deserialize;
 struct Plugin;
 
 impl Guest for Plugin {
-    fn handle_event(meta: EventMeta, payload: Vec<u8>) -> i32 {
-        match meta.topic.as_str() {
+    fn handle_event(
+        _id:        String,
+        topic:      String,
+        _version:   u32,
+        _timestamp: u64,
+        payload:    Vec<u8>,
+    ) -> i32 {
+        match topic.as_str() {
             "SYS_STARTUP"      => on_startup(&payload),
             "CRYPTO_ENCRYPTED" => send_encrypted(&payload),
             "NET_RECEIVED"     => on_net_received(&payload),
@@ -20,8 +26,6 @@ impl Guest for Plugin {
 }
 
 export!(Plugin);
-
-// ── URL storage ───────────────────────────────────────────────────────────────
 
 const MAX_URL: usize = 256;
 
@@ -61,8 +65,6 @@ fn init_urls(chat_id: &str) {
     }
 }
 
-// ── handlers ──────────────────────────────────────────────────────────────────
-
 const DEFAULT_CHAT: &str = "wasm-messenger";
 
 #[derive(Deserialize, Default)]
@@ -96,7 +98,8 @@ fn on_startup(payload: &[u8]) -> i32 {
 
 fn send_encrypted(ciphertext: &[u8]) -> i32 {
     let encoded = base64_encode(ciphertext);
-    host_http_post(get_send_url(), &encoded)
+    let s = alloc::string::String::from_utf8(encoded).unwrap_or_default();
+    host_http_post(get_send_url(), s.as_bytes())
 }
 
 fn on_net_received(payload: &[u8]) -> i32 {
@@ -112,8 +115,6 @@ fn on_net_received(payload: &[u8]) -> i32 {
         None          => 0,
     }
 }
-
-// ── base64 ────────────────────────────────────────────────────────────────────
 
 const B64: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 

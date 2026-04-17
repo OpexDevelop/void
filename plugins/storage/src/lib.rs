@@ -1,5 +1,5 @@
 wit_bindgen::generate!({
-    path:  "../../wit/plugin.wit",
+    path:  "../../core/wit/plugin.wit",
     world: "plugin-world",
 });
 
@@ -9,9 +9,15 @@ use std::collections::HashMap;
 struct Plugin;
 
 impl Guest for Plugin {
-    fn handle_event(meta: EventMeta, payload: Vec<u8>) -> i32 {
-        match meta.topic.as_str() {
-            "UI_SEND_MSG" | "CRYPTO_DECRYPTED" => store_message(&meta.id, meta.timestamp, &payload),
+    fn handle_event(
+        id:         String,
+        topic:      String,
+        _version:   u32,
+        timestamp:  u64,
+        payload:    Vec<u8>,
+    ) -> i32 {
+        match topic.as_str() {
+            "UI_SEND_MSG" | "CRYPTO_DECRYPTED" => store_message(&id, timestamp, &payload),
             "DB_READ_CMD"                      => read_and_emit_history(),
             _                                  => 0,
         }

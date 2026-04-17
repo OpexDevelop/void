@@ -6,7 +6,7 @@ use wasmtime::{
 };
 use wasmtime_wasi::{DirPerms, FilePerms, ResourceTable, WasiCtx, WasiCtxBuilder, WasiView};
 
-use crate::event::{BusTx, Event, EventMeta};
+use crate::event::{BusTx, Event, EventMeta as HostEventMeta};
 use crate::network;
 use super::{HostContext, PluginInstance, PluginRuntime};
 
@@ -33,7 +33,7 @@ impl WasiView for HostState {
 impl NetworkPluginWorldImports for HostState {
     async fn emit_event(&mut self, topic: String, payload: Vec<u8>) -> wasmtime::Result<()> {
         let _ = self.event_tx.send(Event {
-            meta:    EventMeta::new(topic),
+            meta:    HostEventMeta::new(topic),
             payload,
         }).await;
         Ok(())
@@ -116,18 +116,18 @@ pub struct WasmtimeInstance {
 #[async_trait]
 impl PluginInstance for WasmtimeInstance {
     async fn handle_event(&mut self, meta_json: &[u8], payload: &[u8]) -> Result<(), String> {
-        let meta: crate::event::EventMeta = serde_json::from_slice(meta_json)
+        let meta: HostEventMeta = serde_json::from_slice(meta_json)
             .map_err(|e| e.to_string())?;
 
-        let wit_meta = void::plugin::types::EventMeta {
-            id:        meta.id,
-            topic:     meta.topic,
-            version:   meta.version,
-            timestamp: meta.timestamp,
-        };
-
         let result = self.plugin
-            .call_handle_event(&mut self.store, &wit_meta, payload)
+            .call_handle_event(
+                &mut self.store,
+                &meta.id,
+                &meta.topic,
+                meta.version,
+                meta.timestamp,
+                payload,
+            )
             .await
             .map_err(|e| e.to_string())?;
 

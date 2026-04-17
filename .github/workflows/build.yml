@@ -75,9 +75,6 @@ jobs:
       - name: Install cargo-ndk
         run: cargo install cargo-ndk --locked
 
-      - name: Copy WIT to core
-        run: cp -r wit core/wit
-
       - name: Build release (Android)
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
@@ -113,9 +110,6 @@ jobs:
             target
           key: wasm-plugins-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: wasm-plugins-
-
-      - name: Copy WIT to core
-        run: cp -r wit core/wit
 
       - name: Build plugins
         run: |

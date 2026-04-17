@@ -1,34 +1,27 @@
 package void:plugin@0.1.0;
 
-interface types {
-    record event-meta {
+world plugin-world {
+    import emit-event: func(topic: string, payload: list<u8>);
+
+    export handle-event: func(
         id:        string,
         topic:     string,
         version:   u32,
         timestamp: u64,
-    }
-}
-
-world plugin-world {
-    use types.{event-meta};
-
-    import emit-event: func(topic: string, payload: list<u8>);
-
-    export handle-event: func(
-        meta:    event-meta,
-        payload: list<u8>,
+        payload:   list<u8>,
     ) -> s32;
 }
 
 world network-plugin-world {
-    use types.{event-meta};
-
     import emit-event:     func(topic: string, payload: list<u8>);
     import host-http-post: func(url: string, body: list<u8>) -> s32;
     import host-sse-start: func(url: string) -> s32;
 
     export handle-event: func(
-        meta:    event-meta,
-        payload: list<u8>,
+        id:        string,
+        topic:     string,
+        version:   u32,
+        timestamp: u64,
+        payload:   list<u8>,
     ) -> s32;
 }

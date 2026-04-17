@@ -1,5 +1,5 @@
 wit_bindgen::generate!({
-    path:  "../../wit/plugin.wit",
+    path:  "../../core/wit/plugin.wit",
     world: "network-plugin-world",
 });
 
@@ -11,8 +11,14 @@ use chacha20poly1305::{
 struct Plugin;
 
 impl Guest for Plugin {
-    fn handle_event(meta: EventMeta, payload: Vec<u8>) -> i32 {
-        match meta.topic.as_str() {
+    fn handle_event(
+        _id:        String,
+        topic:      String,
+        _version:   u32,
+        _timestamp: u64,
+        payload:    Vec<u8>,
+    ) -> i32 {
+        match topic.as_str() {
             "UI_SEND_MSG"      => encrypt_and_emit(&payload),
             "NET_RECEIVED_MSG" => decrypt_and_emit(&payload),
             _                  => 0,
