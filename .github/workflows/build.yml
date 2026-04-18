@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 env:
-  RUSTFLAGS: "-C link-arg=-fuse-ld=lld"
+  # Оставляем глобально только инкрементальную сборку
   CARGO_INCREMENTAL: 1
 
 jobs:
@@ -29,10 +29,14 @@ jobs:
         with:
           shared-key: "void"
 
+      # Собираем плагин без лишних флагов (он сам знает, как собрать Wasm)
       - name: build plugin
         run: cargo build -p plugin --target wasm32-unknown-unknown --release
 
+      # А вот здесь применяем быстрый линковщик ТОЛЬКО для ядра
       - name: build void
+        env:
+          RUSTFLAGS: "-C link-arg=-fuse-ld=lld"
         run: cargo build -p void --release
 
       - name: test
