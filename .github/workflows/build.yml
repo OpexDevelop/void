@@ -47,7 +47,7 @@ jobs:
           cd dist
           chmod +x void
           ./void <<EOF
-          hello_world
+          test_async_message
           /quit
           EOF
 
