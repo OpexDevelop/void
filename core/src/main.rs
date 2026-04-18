@@ -5,7 +5,7 @@ fn main() {
     println!("🚀 Запускаем Хост...");
 
     // Путь к скомпилированному плагину (Cargo кладет его сюда)
-    let wasm_path = "./plugins/plugin_test.wasm";
+    let wasm_path = "./plugins/plugin.wasm";
 
     if !Path::new(wasm_path).exists() {
         println!("⚠️ Файл плагина не найден: {}", wasm_path);
