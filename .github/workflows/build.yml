@@ -15,21 +15,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: install lld
-        run: sudo apt-get install -y lld
+      - name: install build tools
+        run: |
+          sudo apt-get install -y lld gcc-aarch64-linux-gnu
 
       - name: setup rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          # Меняем таргет на правильный андроидный
-          targets: wasm32-unknown-unknown, aarch64-linux-android
+          targets: wasm32-unknown-unknown, aarch64-unknown-linux-gnu, aarch64-linux-android
 
       - name: cache
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: "void"
 
-      # --- МАГИЯ ДЛЯ ANDROID ---
       - name: setup android ndk
         id: setup-ndk
         uses: nttld/setup-ndk@v1
@@ -39,12 +38,12 @@ jobs:
 
       - name: install cargo-ndk
         run: cargo install cargo-ndk
-      # -------------------------
 
       - name: build plugins
         run: |
           cargo build -p plugin-crypto --target wasm32-unknown-unknown --release
           cargo build -p plugin-logger --target wasm32-unknown-unknown --release
+          cargo build -p plugin-ntfy --target wasm32-unknown-unknown --release
 
       - name: build void (linux x64)
         env:
@@ -54,7 +53,6 @@ jobs:
       - name: build void (android/aarch64)
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
-        # Собираем через cargo-ndk под 24 API (Android 7.0+)
         run: cargo ndk --target aarch64-linux-android --platform 24 build -p void --release
 
       - name: package & test
@@ -62,19 +60,16 @@ jobs:
           mkdir -p dist/plugins
           mkdir -p dist/android
           
-          # Основной билд и плагины
           cp target/release/void dist/
           cp target/wasm32-unknown-unknown/release/*.wasm dist/plugins/
           
-          # Правильный бинарник для Термукса
           cp target/aarch64-linux-android/release/void dist/android/
           
           cd dist
           chmod +x void
           echo "[TEST] Запуск проверки..."
           ./void <<EOF
-          hello_stage_4
-          next_message
+          hello_from_github_actions
           /quit
           EOF
 

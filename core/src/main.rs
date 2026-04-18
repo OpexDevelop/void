@@ -25,7 +25,10 @@ impl PluginManager {
         if path.extension().and_then(|s| s.to_str()) != Some("wasm") { return; }
         let name = path.file_stem().unwrap().to_str().unwrap().to_string();
         let wasm = Wasm::file(&path);
-        let manifest = Manifest::new([wasm]);
+        
+        let mut manifest = Manifest::new([wasm]);
+        manifest.allowed_hosts = Some(vec!["ntfy.sh".to_string()]);
+
         if let Ok(p) = Plugin::new(&manifest, [], false) {
             self.plugins.insert(name.clone(), p);
             println!("🔄 Плагин [ {} ] загружен/обновлен", name);

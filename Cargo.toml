@@ -2,7 +2,8 @@
 members = [
     "core",
     "plugins/crypto",
-    "plugins/logger"
+    "plugins/logger",
+    "plugins/ntfy"
 ]
 resolver = "2"
 
