@@ -46,10 +46,11 @@ jobs:
           cargo build -p plugin-storage --target wasm32-unknown-unknown --release
           cargo build -p plugin-omnilogger --target wasm32-unknown-unknown --release
 
-      - name: build cli (linux x64)
-        env:
-          RUSTFLAGS: "-C link-arg=-fuse-ld=lld"
-        run: cargo build -p voidchat --release
+      # ВРЕМЕННО ОТКЛЮЧЕНО
+      # - name: build cli (linux x64)
+      #   env:
+      #     RUSTFLAGS: "-C link-arg=-fuse-ld=lld"
+      #   run: cargo build -p voidchat --release
 
       - name: build cli (android/aarch64)
         env:
@@ -61,10 +62,10 @@ jobs:
           mkdir -p dist/cli/plugins
           mkdir -p dist/android/cli/plugins
           
-          # Linux x64
-          cp target/release/voidchat dist/
-          cp target/wasm32-unknown-unknown/release/*.wasm dist/cli/plugins/
-          cp cli/plugins/*.toml dist/cli/plugins/
+          # Linux x64 (временно выключено)
+          # cp target/release/voidchat dist/
+          # cp target/wasm32-unknown-unknown/release/*.wasm dist/cli/plugins/
+          # cp cli/plugins/*.toml dist/cli/plugins/
           
           # Android
           cp target/aarch64-linux-android/release/voidchat dist/android/

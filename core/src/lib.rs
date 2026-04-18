@@ -10,7 +10,7 @@ pub struct Event {
     pub topic: String,
     pub data: String,
     #[serde(default)]
-    pub ts: u64, // <-- Внедрили время!
+    pub ts: u64,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -94,8 +94,8 @@ impl Engine {
         let plugins = Arc::clone(&self.plugins);
         
         tokio::spawn(async move {
-            while let mut event = self.rx.recv().await {
-                // Если плагин не указал время (0), Ядро ставит точное текущее
+            // ИСПРАВЛЕНО: добавлено Some()
+            while let Some(mut event) = self.rx.recv().await {
                 if event.ts == 0 {
                     event.ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
                 }
@@ -107,7 +107,6 @@ impl Engine {
                     if loaded.subscriptions.contains(&event.topic) {
                         if let Ok(res_str) = loaded.plugin.call::<&str, &str>("handle_event", &event_json) {
                             if let Ok(response) = serde_json::from_str::<PluginResponse>(res_str) {
-                                // Оставляем вывод в консоль для критических логов
                                 if let Some(log_msg) = response.log {
                                     if event.topic != "SYS_TICK" {
                                         println!("  └─ [{}] log: {}", name, log_msg);
