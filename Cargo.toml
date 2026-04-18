@@ -3,8 +3,9 @@ members = [
     "core",
     "cli",
     "cli/plugins/crypto",
-    "cli/plugins/dweet",
-    "cli/plugins/storage"
+    "cli/plugins/fstransport",
+    "cli/plugins/storage",
+    "cli/plugins/omnilogger"
 ]
 resolver = "2"
 

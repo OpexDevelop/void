@@ -42,8 +42,9 @@ jobs:
       - name: build plugins
         run: |
           cargo build -p plugin-crypto --target wasm32-unknown-unknown --release
-          cargo build -p plugin-dweet --target wasm32-unknown-unknown --release
+          cargo build -p plugin-fstransport --target wasm32-unknown-unknown --release
           cargo build -p plugin-storage --target wasm32-unknown-unknown --release
+          cargo build -p plugin-omnilogger --target wasm32-unknown-unknown --release
 
       - name: build cli (linux x64)
         env:

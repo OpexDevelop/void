@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 struct Event {
     topic: String,
     data: String,
+    #[serde(default)]
+    ts: u64,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -23,12 +25,14 @@ pub fn handle_event(input: String) -> FnResult<String> {
         emit_events.push(Event {
             topic: "CRYPTO_ENCRYPTED".to_string(),
             data: encrypted,
+            ts: 0
         });
     } else if event.topic == "NET_RECEIVED" {
         let decrypted = event.data.replace("enc(", "").replace(")", "");
         emit_events.push(Event {
             topic: "CRYPTO_DECRYPTED".to_string(),
             data: decrypted,
+            ts: 0
         });
     }
 

@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 struct Event {
     topic: String,
     data: String,
+    #[serde(default)]
+    ts: u64,
 }
 
 #[derive(Serialize, Deserialize)]

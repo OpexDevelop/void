@@ -14,14 +14,14 @@ async fn main() -> anyhow::Result<()> {
     
     engine.run().await;
 
-    // Фоновый процесс (Пульс)
     let tx_tick = tx.clone();
     tokio::spawn(async move {
         loop {
-            tokio::time::sleep(tokio::time::Duration::from_secs(15)).await;
+            tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
             let _ = tx_tick.send(Event {
                 topic: "SYS_TICK".to_string(),
                 data: "".to_string(),
+                ts: 0,
             }).await;
         }
     });
@@ -39,6 +39,7 @@ async fn main() -> anyhow::Result<()> {
         let _ = tx.send(Event {
             topic: "UI_SEND_MSG".to_string(),
             data: text.to_string(),
+            ts: 0,
         }).await;
     }
 

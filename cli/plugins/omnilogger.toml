@@ -1,0 +1,5 @@
+name = "omnilogger"
+wasm = "plugin_omnilogger.wasm"
+subscriptions = ["SYS_TICK", "UI_SEND_MSG", "CRYPTO_ENCRYPTED", "CRYPTO_DECRYPTED", "NET_RECEIVED"]
+[allowed_paths]
+"./cli/logs" = "/logs"

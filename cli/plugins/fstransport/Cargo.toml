@@ -1,5 +1,5 @@
 [package]
-name = "plugin-dweet"
+name = "plugin-fstransport"
 version = "0.1.0"
 edition = "2021"
 
