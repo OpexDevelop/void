@@ -43,6 +43,7 @@ jobs:
         run: |
           cargo build -p plugin-crypto --target wasm32-unknown-unknown --release
           cargo build -p plugin-ntfy --target wasm32-unknown-unknown --release
+          cargo build -p plugin-storage --target wasm32-unknown-unknown --release
 
       - name: build cli (linux x64)
         env:

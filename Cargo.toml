@@ -3,7 +3,8 @@ members = [
     "core",
     "cli",
     "cli/plugins/crypto",
-    "cli/plugins/ntfy"
+    "cli/plugins/ntfy",
+    "cli/plugins/storage"
 ]
 resolver = "2"
 

@@ -1,0 +1,6 @@
+name = "storage"
+wasm = "plugin_storage.wasm"
+subscriptions = ["UI_SEND_MSG", "CRYPTO_DECRYPTED"]
+
+[allowed_paths]
+"./cli/data" = "/data"

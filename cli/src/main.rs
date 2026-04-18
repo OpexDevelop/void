@@ -13,6 +13,18 @@ async fn main() -> anyhow::Result<()> {
     engine.load_plugins(&plugins_dir).await?;
     
     engine.run().await;
+
+    // Фоновый процесс (Пульс)
+    let tx_tick = tx.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+            let _ = tx_tick.send(Event {
+                topic: "SYS_TICK".to_string(),
+                data: "".to_string(),
+            }).await;
+        }
+    });
     
     println!("✅ voidchat готов. Введите сообщение:");
 

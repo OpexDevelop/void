@@ -1,6 +1,6 @@
 use extism::{Manifest as ExtismManifest, Plugin, Wasm};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
@@ -23,6 +23,7 @@ struct PluginConfig {
     wasm: String,
     subscriptions: Vec<String>,
     allowed_hosts: Option<Vec<String>>,
+    allowed_paths: Option<HashMap<String, String>>,
 }
 
 struct LoadedPlugin {
@@ -65,6 +66,16 @@ impl Engine {
                                 manifest.allowed_hosts = Some(hosts);
                             }
 
+                            // Выдаем доступ к папкам (Хост -> Wasm)
+                            if let Some(paths) = config.allowed_paths {
+                                let mut btree = BTreeMap::new();
+                                for (host_path, guest_path) in paths {
+                                    std::fs::create_dir_all(&host_path).ok();
+                                    btree.insert(PathBuf::from(host_path), PathBuf::from(guest_path));
+                                }
+                                manifest.allowed_paths = Some(btree);
+                            }
+
                             if let Ok(p) = Plugin::new(&manifest, [], false) {
                                 let subs: HashSet<String> = config.subscriptions.into_iter().collect();
                                 r.insert(config.name.clone(), LoadedPlugin { plugin: p, subscriptions: subs });
@@ -91,7 +102,9 @@ impl Engine {
                         if let Ok(res_str) = loaded.plugin.call::<&str, &str>("handle_event", &event_json) {
                             if let Ok(response) = serde_json::from_str::<PluginResponse>(res_str) {
                                 if let Some(log_msg) = response.log {
-                                    println!("  └─ [{}] log: {}", name, log_msg);
+                                    if event.topic != "SYS_TICK" {
+                                        println!("  └─ [{}] log: {}", name, log_msg);
+                                    }
                                 }
                                 for new_event in response.emit {
                                     let _ = tx_for_bus.send(new_event).await;
