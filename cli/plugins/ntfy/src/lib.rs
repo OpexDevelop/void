@@ -19,20 +19,22 @@ pub fn handle_event(input: String) -> FnResult<String> {
     let mut log_msg = None;
     let mut emit_events = Vec::new();
     
-    // 1. Отправка сообщений
     if event.topic == "CRYPTO_ENCRYPTED" {
         let req = HttpRequest::new("https://ntfy.sh/void_messenger_test_channel")
             .with_method("POST");
-        let _ = http::request::<String>(&req, Some(event.data));
+            
+        if let Ok(res) = http::request::<String>(&req, Some(event.data)) {
+            log_msg = Some(format!("Отправлено в сеть: {}", res.status_code()));
+        }
     } 
-    // 2. Получение новых сообщений (Пульс)
     else if event.topic == "SYS_TICK" {
         let since: String = var::get("since")?.unwrap_or_else(|| "all".to_string());
         let url = format!("https://ntfy.sh/void_messenger_test_channel/json?poll=1&since={}", since);
         
         let req = HttpRequest::new(&url).with_method("GET");
         if let Ok(res) = http::request::<Vec<u8>>(&req, None) {
-            let body = String::from_utf8_lossy(&res.body());
+            let body_bytes = res.body();
+            let body = String::from_utf8_lossy(&body_bytes);
             
             for line in body.lines() {
                 if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
@@ -45,7 +47,7 @@ pub fn handle_event(input: String) -> FnResult<String> {
                         }
                     }
                     if let Some(id) = val["id"].as_str() {
-                        var::set("since", id)?; // Запоминаем ID последнего сообщения
+                        var::set("since", id)?;
                     }
                 }
             }
