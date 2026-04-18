@@ -1,41 +1,63 @@
 use extism::{Manifest, Plugin, Wasm};
+use serde::{Deserialize, Serialize};
+use std::fs;
 use std::path::Path;
 
+#[derive(Serialize, Deserialize, Debug)]
+struct Event {
+    topic: String,
+    data: String,
+}
+
 fn main() {
-    println!("🚀 Запускаем Хост...");
+    println!("📡 void: Загрузка плагинов...");
+    
+    let plugins_dir = Path::new("./plugins");
+    let mut loaded_plugins = Vec::new();
 
-    // Путь к скомпилированному плагину (Cargo кладет его сюда)
-    let wasm_path = "./plugins/plugin.wasm";
+    if let Ok(entries) = fs::read_dir(plugins_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) == Some("wasm") {
+                let name = path.file_stem().unwrap().to_str().unwrap().to_string();
+                let wasm = Wasm::file(&path);
+                let manifest = Manifest::new([wasm]);
+                
+                if let Ok(p) = Plugin::new(&manifest, [], false) {
+                    loaded_plugins.push((name, p));
+                    println!("  + запущен [ {} ]", entry.file_name().to_str().unwrap());
+                }
+            }
+        }
+    }
 
-    if !Path::new(wasm_path).exists() {
-        println!("⚠️ Файл плагина не найден: {}", wasm_path);
-        println!("Остановись и скомпилируй плагин командой из инструкции!");
+    if loaded_plugins.is_empty() {
+        println!("❌ Нет плагинов для работы. Выход.");
         return;
     }
 
-    // 1. Загружаем wasm-файл
-    let wasm = Wasm::file(wasm_path);
-    let manifest = Manifest::new([wasm]);
+    println!("✅ void готов. Введи сообщение для рассылки:");
 
-    // 2. Создаем инстанс плагина 
-    // (второй аргумент - это функции хоста, третий - поддержка WASI. Пока нам это не нужно)
-    let mut plugin = match Plugin::new(&manifest, [], false) {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("❌ Ошибка загрузки плагина: {}", e);
-            return;
+    let stdin = std::io::stdin();
+    let mut input = String::new();
+
+    while stdin.read_line(&mut input).is_ok() {
+        let text = input.trim();
+        if text == "/quit" { break; }
+
+        let event = Event {
+            topic: "user_input".to_string(),
+            data: text.to_string(),
+        };
+        let event_json = serde_json::to_string(&event).unwrap();
+
+        for (name, plugin) in loaded_plugins.iter_mut() {
+            match plugin.call::<&str, &str>("handle_event", &event_json) {
+                Ok(res) => println!("[{}] вернул: {}", name, res),
+                Err(e) => eprintln!("![{}] ошибка: {:?}", name, e),
+            }
         }
-    };
-
-    println!("✅ Плагин успешно загружен!");
-
-    // 3. Вызываем функцию "greet" из плагина
-    let input_text = "Создатель";
-    println!("➡️ Отправляем в плагин текст: \"{}\"", input_text);
-
-    // Вызываем функцию и указываем типы: передаем &str, ожидаем &str
-    match plugin.call::<&str, &str>("greet", input_text) {
-        Ok(response) => println!("⬅️ Ответ от плагина: \"{}\"", response),
-        Err(e) => eprintln!("❌ Ошибка вызова функции: {}", e),
+        
+        input.clear();
     }
 }

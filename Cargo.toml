@@ -1,10 +1,10 @@
 [workspace]
-members = ["core", "plugin"]
+members = [
+    "core",
+    "plugins/crypto",
+    "plugins/logger"
+]
 resolver = "2"
-
-[profile.dev]
-debug = 0
-incremental = true
 
 [profile.release]
 debug = 0

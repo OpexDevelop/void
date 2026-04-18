@@ -6,7 +6,6 @@ on:
   workflow_dispatch:
 
 env:
-  # Оставляем глобально только инкрементальную сборку
   CARGO_INCREMENTAL: 1
 
 jobs:
@@ -29,28 +28,28 @@ jobs:
         with:
           shared-key: "void"
 
-      # Собираем плагин без лишних флагов (он сам знает, как собрать Wasm)
-      - name: build plugin
-        run: cargo build -p plugin --target wasm32-unknown-unknown --release
+      - name: build plugins
+        run: |
+          cargo build -p plugin-crypto --target wasm32-unknown-unknown --release
+          cargo build -p plugin-logger --target wasm32-unknown-unknown --release
 
-      # А вот здесь применяем быстрый линковщик ТОЛЬКО для ядра
       - name: build void
         env:
           RUSTFLAGS: "-C link-arg=-fuse-ld=lld"
         run: cargo build -p void --release
 
-      - name: test
-        run: |
-          mkdir -p plugins
-          cp target/wasm32-unknown-unknown/release/plugin.wasm ./plugins/
-          chmod +x ./target/release/void
-          ./target/release/void
-
-      - name: package
+      - name: package & test
         run: |
           mkdir -p dist/plugins
           cp target/release/void dist/
-          cp ./plugins/plugin.wasm dist/plugins/
+          cp target/wasm32-unknown-unknown/release/*.wasm dist/plugins/
+          
+          cd dist
+          chmod +x void
+          ./void <<EOF
+          hello_world
+          /quit
+          EOF
 
       - name: upload
         uses: actions/upload-artifact@v4
