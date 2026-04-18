@@ -1,0 +1,55 @@
+name: Build Void Extism
+
+# Запускаем скрипт при каждом пуше (коммите) и оставляем возможность ручного запуска
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Host & Plugin
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Скачиваем твой код из репозитория
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. Устанавливаем стабильный Rust и добавляем поддержку WebAssembly
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      # 3. Кэшируем зависимости, чтобы следующие сборки летали за секунды
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      # 4. Компилируем Wasm-плагин (в режиме release для максимальной скорости)
+      - name: Build Plugin (Wasm)
+        run: cargo build -p plugin-test --target wasm32-unknown-unknown --release
+
+      # 5. Компилируем ядро/Хост (под Linux x86_64)
+      - name: Build Host
+        run: cargo build -p host --release
+
+      # 6. Собираем готовые файлы в одну красивую папку dist
+      - name: Prepare Artifacts
+        run: |
+          mkdir -p dist/plugins
+          cp target/release/host dist/
+          cp target/wasm32-unknown-unknown/release/plugin_test.wasm dist/plugins/
+
+      # 7. Загружаем папку dist как артефакт (чтобы ты мог ее скачать)
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: void-release
+          path: dist/
