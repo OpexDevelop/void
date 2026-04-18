@@ -1,5 +1,6 @@
 name = "fstransport"
 wasm = "plugin_fstransport.wasm"
 subscriptions = ["CRYPTO_ENCRYPTED", "SYS_TICK"]
+
 [allowed_paths]
-"/data/data/com.termux/files/tmp/void_net" = "/net"
+"../shared_net" = "/net"

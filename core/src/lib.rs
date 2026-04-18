@@ -77,9 +77,13 @@ impl Engine {
                                 manifest.allowed_paths = Some(btree);
                             }
 
-                            if let Ok(p) = Plugin::new(&manifest, [], false) {
+                            // ВАЖНО: Третий параметр TRUE включает WASI (доступ к файлам/сети)
+                            if let Ok(p) = Plugin::new(&manifest, [], true) {
                                 let subs: HashSet<String> = config.subscriptions.into_iter().collect();
                                 r.insert(config.name.clone(), LoadedPlugin { plugin: p, subscriptions: subs });
+                                println!("🔄 Загружен [ {} ]", config.name);
+                            } else {
+                                eprintln!("❌ Ошибка инициализации плагина {}", config.name);
                             }
                         }
                     }
@@ -94,7 +98,6 @@ impl Engine {
         let plugins = Arc::clone(&self.plugins);
         
         tokio::spawn(async move {
-            // ИСПРАВЛЕНО: добавлено Some()
             while let Some(mut event) = self.rx.recv().await {
                 if event.ts == 0 {
                     event.ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
@@ -105,15 +108,23 @@ impl Engine {
                 
                 for (name, loaded) in r.iter_mut() {
                     if loaded.subscriptions.contains(&event.topic) {
-                        if let Ok(res_str) = loaded.plugin.call::<&str, &str>("handle_event", &event_json) {
-                            if let Ok(response) = serde_json::from_str::<PluginResponse>(res_str) {
-                                if let Some(log_msg) = response.log {
-                                    if event.topic != "SYS_TICK" {
-                                        println!("  └─ [{}] log: {}", name, log_msg);
+                        match loaded.plugin.call::<&str, &str>("handle_event", &event_json) {
+                            Ok(res_str) => {
+                                if let Ok(response) = serde_json::from_str::<PluginResponse>(res_str) {
+                                    if let Some(log_msg) = response.log {
+                                        if event.topic != "SYS_TICK" {
+                                            println!("  └─ [{}] log: {}", name, log_msg);
+                                        }
+                                    }
+                                    for new_event in response.emit {
+                                        let _ = tx_for_bus.send(new_event).await;
                                     }
                                 }
-                                for new_event in response.emit {
-                                    let _ = tx_for_bus.send(new_event).await;
+                            }
+                            Err(e) => {
+                                // Теперь мы будем видеть, если плагин упал (например, нет прав)
+                                if event.topic != "SYS_TICK" {
+                                    eprintln!("  ![{}] ОШИБКА: {:?}", name, e);
                                 }
                             }
                         }
