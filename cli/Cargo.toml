@@ -6,3 +6,4 @@ edition = "2021"
 [dependencies]
 void-core = { path = "../core" }
 tokio = { version = "1.0", features = ["full"] }
+anyhow = "1.0"
