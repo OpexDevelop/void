@@ -7,14 +7,29 @@ struct Event {
     data: String,
 }
 
+#[derive(Serialize, Deserialize)]
+struct PluginResponse {
+    log: Option<String>,
+    emit: Vec<Event>,
+}
+
 #[plugin_fn]
 pub fn handle_event(input: String) -> FnResult<String> {
     let event: Event = serde_json::from_str(&input)?;
+    let mut emit_events = Vec::new();
     
-    if event.topic == "user_input" {
+    if event.topic == "UI_SEND_MSG" {
         let encrypted = format!("enc({})", event.data);
-        Ok(format!("Base64: {}", encrypted))
-    } else {
-        Ok("ignore".to_string())
+        emit_events.push(Event {
+            topic: "CRYPTO_ENCRYPTED".to_string(),
+            data: encrypted,
+        });
     }
+
+    let response = PluginResponse {
+        log: Some("Шифрование выполнено".to_string()),
+        emit: emit_events,
+    };
+    
+    Ok(serde_json::to_string(&response)?)
 }

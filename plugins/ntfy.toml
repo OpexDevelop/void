@@ -1,0 +1,4 @@
+name = "ntfy"
+wasm = "plugin_ntfy.wasm"
+subscriptions = ["CRYPTO_ENCRYPTED"]
+allowed_hosts = ["ntfy.sh"]
