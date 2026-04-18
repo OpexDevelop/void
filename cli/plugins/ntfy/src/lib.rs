@@ -17,21 +17,27 @@ struct PluginResponse {
 pub fn handle_event(input: String) -> FnResult<String> {
     let event: Event = serde_json::from_str(&input)?;
     let mut log_msg = String::new();
+    let mut emit_events = Vec::new();
     
     if event.topic == "CRYPTO_ENCRYPTED" {
         let req = HttpRequest::new("https://ntfy.sh/void_messenger_test_channel")
             .with_method("POST")
-            .with_header("Title", "Void Host");
+            .with_header("Title", "VoidChat");
             
-        match http::request::<String>(&req, Some(event.data)) {
-            Ok(res) => log_msg = format!("Отправлено в ntfy! HTTP: {}", res.status_code()),
+        match http::request::<String>(&req, Some(event.data.clone())) {
+            Ok(res) => log_msg = format!("Отправлено в сеть: {}", res.status_code()),
             Err(e) => log_msg = format!("Ошибка сети: {}", e),
         }
+        
+        emit_events.push(Event {
+            topic: "NET_RECEIVED".to_string(),
+            data: event.data,
+        });
     }
 
     let response = PluginResponse {
         log: Some(log_msg),
-        emit: vec![],
+        emit: emit_events,
     };
     
     Ok(serde_json::to_string(&response)?)

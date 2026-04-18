@@ -1,3 +1,0 @@
-name = "crypto"
-wasm = "plugin_crypto.wasm"
-subscriptions = ["UI_SEND_MSG"]

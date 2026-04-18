@@ -1,9 +1,9 @@
 [workspace]
 members = [
     "core",
-    "plugins/crypto",
-    "plugins/logger",
-    "plugins/ntfy"
+    "cli",
+    "cli/plugins/crypto",
+    "cli/plugins/ntfy"
 ]
 resolver = "2"
 

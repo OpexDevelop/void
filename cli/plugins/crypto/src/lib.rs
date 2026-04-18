@@ -24,10 +24,16 @@ pub fn handle_event(input: String) -> FnResult<String> {
             topic: "CRYPTO_ENCRYPTED".to_string(),
             data: encrypted,
         });
+    } else if event.topic == "NET_RECEIVED" {
+        let decrypted = event.data.replace("enc(", "").replace(")", "");
+        emit_events.push(Event {
+            topic: "CRYPTO_DECRYPTED".to_string(),
+            data: decrypted,
+        });
     }
 
     let response = PluginResponse {
-        log: Some("Шифрование выполнено".to_string()),
+        log: None,
         emit: emit_events,
     };
     

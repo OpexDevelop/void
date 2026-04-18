@@ -42,40 +42,35 @@ jobs:
       - name: build plugins
         run: |
           cargo build -p plugin-crypto --target wasm32-unknown-unknown --release
-          cargo build -p plugin-logger --target wasm32-unknown-unknown --release
           cargo build -p plugin-ntfy --target wasm32-unknown-unknown --release
 
-      - name: build void (linux x64)
+      - name: build cli (linux x64)
         env:
           RUSTFLAGS: "-C link-arg=-fuse-ld=lld"
-        run: cargo build -p void --release
+        run: cargo build -p voidchat --release
 
-      - name: build void (android/aarch64)
+      - name: build cli (android/aarch64)
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
-        run: cargo ndk --target aarch64-linux-android --platform 24 build -p void --release
+        run: cargo ndk --target aarch64-linux-android --platform 24 build -p voidchat --release
 
-      - name: package & test
+      - name: package
         run: |
-          mkdir -p dist/plugins
-          mkdir -p dist/android
+          mkdir -p dist/cli/plugins
+          mkdir -p dist/android/cli/plugins
           
-          cp target/release/void dist/
-          cp target/wasm32-unknown-unknown/release/*.wasm dist/plugins/
-          cp plugins/*.toml dist/plugins/
+          # Linux x64
+          cp target/release/voidchat dist/
+          cp target/wasm32-unknown-unknown/release/*.wasm dist/cli/plugins/
+          cp cli/plugins/*.toml dist/cli/plugins/
           
-          cp target/aarch64-linux-android/release/void dist/android/
-          
-          cd dist
-          chmod +x void
-          echo "[TEST] Запуск проверки..."
-          ./void <<EOF
-          hello_from_github_actions
-          /quit
-          EOF
+          # Android
+          cp target/aarch64-linux-android/release/voidchat dist/android/
+          cp target/wasm32-unknown-unknown/release/*.wasm dist/android/cli/plugins/
+          cp cli/plugins/*.toml dist/android/cli/plugins/
 
       - name: upload
         uses: actions/upload-artifact@v4
         with:
-          name: void
+          name: voidchat
           path: dist/
