@@ -1,10 +1,10 @@
 use extism::{Manifest, Plugin, Wasm};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
-use notify::{Watcher, RecursiveMode, Config};
+use notify::{Watcher, RecursiveMode};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct Event {
@@ -68,22 +68,23 @@ async fn main() -> anyhow::Result<()> {
 
     tokio::spawn(async move {
         while let Some(event) = rx.recv().await {
+            println!("[void] Обработка сообщения: '{}'", event.data);
             let event_json = serde_json::to_string(&event).unwrap();
             let mut m = manager.write().await;
             for (name, plugin) in m.plugins.iter_mut() {
                 if let Ok(res) = plugin.call::<&str, &str>("handle_event", &event_json) {
-                    println!("[{}] -> {}", name, res);
+                    println!("  └─ [{}] -> {}", name, res);
                 }
             }
         }
     });
 
     println!("✅ void запущен. Автообновление плагинов включено.");
-    println!("Введите сообщение (или /quit):");
 
     let mut input = String::new();
     while std::io::stdin().read_line(&mut input).is_ok() {
         let text = input.trim();
+        if text.is_empty() { continue; }
         if text == "/quit" { break; }
         
         let _ = tx.send(Event {

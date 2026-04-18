@@ -10,6 +10,10 @@ struct Event {
 #[plugin_fn]
 pub fn handle_event(input: String) -> FnResult<String> {
     let event: Event = serde_json::from_str(&input)?;
-    println!("LOGGER: Получено событие по топику {}", event.topic);
-    Ok("logged".to_string())
+    
+    let mut count: u32 = var::get("msg_count")?.unwrap_or(0);
+    count += 1;
+    var::set("msg_count", count)?;
+
+    Ok(format!("Сообщение #{} принято", count))
 }
