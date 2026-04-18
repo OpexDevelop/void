@@ -66,12 +66,11 @@ impl Engine {
                                 manifest.allowed_hosts = Some(hosts);
                             }
 
-                            // Выдаем доступ к папкам (Хост -> Wasm)
                             if let Some(paths) = config.allowed_paths {
                                 let mut btree = BTreeMap::new();
                                 for (host_path, guest_path) in paths {
                                     std::fs::create_dir_all(&host_path).ok();
-                                    btree.insert(PathBuf::from(host_path), PathBuf::from(guest_path));
+                                    btree.insert(host_path, PathBuf::from(guest_path));
                                 }
                                 manifest.allowed_paths = Some(btree);
                             }
