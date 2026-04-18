@@ -22,8 +22,7 @@ jobs:
       - name: setup rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          # ВАЖНО: Добавили wasm32-wasi вместо unknown-unknown
-          targets: wasm32-wasi, aarch64-unknown-linux-gnu, aarch64-linux-android
+           targets: wasm32-wasip1, aarch64-unknown-linux-gnu, aarch64-linux-android
 
       - name: cache
         uses: Swatinem/rust-cache@v2
@@ -42,10 +41,10 @@ jobs:
 
       - name: build plugins
         run: |
-          cargo build -p plugin-crypto --target wasm32-wasi --release
-          cargo build -p plugin-fstransport --target wasm32-wasi --release
-          cargo build -p plugin-storage --target wasm32-wasi --release
-          cargo build -p plugin-omnilogger --target wasm32-wasi --release
+          cargo build -p plugin-crypto --target wasm32-wasip1 --release
+          cargo build -p plugin-fstransport --target wasm32-wasip1 --release
+          cargo build -p plugin-storage --target wasm32-wasip1 --release
+          cargo build -p plugin-omnilogger --target wasm32-wasip1 --release
 
       # ВРЕМЕННО ОТКЛЮЧЕНО
       # - name: build cli (linux x64)
@@ -65,12 +64,12 @@ jobs:
           
           # Linux x64 (временно выключено)
           # cp target/release/voidchat dist/
-          # cp target/wasm32-wasi/release/*.wasm dist/cli/plugins/
+          # cp target/wasm32-wasip1/release/*.wasm dist/cli/plugins/
           # cp cli/plugins/*.toml dist/cli/plugins/
           
           # Android (Берем .wasm из папки wasm32-wasi)
           cp target/aarch64-linux-android/release/voidchat dist/android/
-          cp target/wasm32-wasi/release/*.wasm dist/android/cli/plugins/
+          cp target/wasm32-wasip1/release/*.wasm dist/android/cli/plugins/
           cp cli/plugins/*.toml dist/android/cli/plugins/
 
       - name: upload
