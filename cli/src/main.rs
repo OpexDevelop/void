@@ -18,7 +18,7 @@ async fn main() -> anyhow::Result<()> {
     let tx_tick = tx.clone();
     tokio::spawn(async move {
         loop {
-            tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+            tokio::time::sleep(tokio::time::Duration::from_secs(15)).await;
             let _ = tx_tick.send(Event {
                 topic: "SYS_TICK".to_string(),
                 data: "".to_string(),
