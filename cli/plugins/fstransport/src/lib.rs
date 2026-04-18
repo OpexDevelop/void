@@ -21,7 +21,6 @@ pub fn handle_event(input: String) -> FnResult<String> {
     let mut log_msg = None;
     let mut emit_events = Vec::new();
 
-    // Получаем или создаем уникальный ID клиента, чтобы не читать свои же сообщения
     let client_id: String = match var::get("client_id")? {
         Some(id) => id,
         None => {
@@ -33,8 +32,9 @@ pub fn handle_event(input: String) -> FnResult<String> {
 
     if event.topic == "CRYPTO_ENCRYPTED" {
         let path = format!("/net/{}_{}.msg", event.ts, client_id);
-        if std::fs::write(&path, &event.data).is_ok() {
-            log_msg = Some("Файл отправлен в общую сеть".to_string());
+        match std::fs::write(&path, &event.data) {
+            Ok(_) => log_msg = Some(format!("Отправлено в /net: {}_{}.msg", event.ts, client_id)),
+            Err(e) => log_msg = Some(format!("ОШИБКА ЗАПИСИ В СЕТЬ: {} (путь: {})", e, path)),
         }
     } 
     else if event.topic == "SYS_TICK" {
@@ -44,18 +44,12 @@ pub fn handle_event(input: String) -> FnResult<String> {
         if let Ok(entries) = std::fs::read_dir("/net") {
             for entry in entries.flatten() {
                 let filename = entry.file_name().into_string().unwrap_or_default();
-                
-                // Читаем только файлы с расширением .msg и НЕ от нашего client_id
                 if filename.ends_with(".msg") && !filename.contains(&client_id) {
                     if let Some(ts_str) = filename.split('_').next() {
                         if let Ok(file_ts) = ts_str.parse::<u64>() {
                             if file_ts > last_ts {
                                 if let Ok(data) = std::fs::read_to_string(entry.path()) {
-                                    emit_events.push(Event {
-                                        topic: "NET_RECEIVED".to_string(),
-                                        data,
-                                        ts: 0,
-                                    });
+                                    emit_events.push(Event { topic: "NET_RECEIVED".to_string(), data, ts: 0 });
                                 }
                                 if file_ts > max_ts { max_ts = file_ts; }
                             }

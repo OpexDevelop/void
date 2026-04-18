@@ -71,19 +71,20 @@ impl Engine {
                             if let Some(paths) = config.allowed_paths {
                                 let mut btree = BTreeMap::new();
                                 for (host_path, guest_path) in paths {
-                                    std::fs::create_dir_all(&host_path).ok();
-                                    btree.insert(host_path, PathBuf::from(guest_path));
+                                    let abs_host_path = std::fs::canonicalize(&host_path)
+                                        .unwrap_or_else(|_| {
+                                            let _ = std::fs::create_dir_all(&host_path);
+                                            std::fs::canonicalize(&host_path).unwrap_or(PathBuf::from(&host_path))
+                                        });
+                                    btree.insert(abs_host_path.to_string_lossy().to_string(), PathBuf::from(guest_path));
                                 }
                                 manifest.allowed_paths = Some(btree);
                             }
 
-                            // ВАЖНО: Третий параметр TRUE включает WASI (доступ к файлам/сети)
                             if let Ok(p) = Plugin::new(&manifest, [], true) {
                                 let subs: HashSet<String> = config.subscriptions.into_iter().collect();
                                 r.insert(config.name.clone(), LoadedPlugin { plugin: p, subscriptions: subs });
                                 println!("🔄 Загружен [ {} ]", config.name);
-                            } else {
-                                eprintln!("❌ Ошибка инициализации плагина {}", config.name);
                             }
                         }
                     }
@@ -122,9 +123,8 @@ impl Engine {
                                 }
                             }
                             Err(e) => {
-                                // Теперь мы будем видеть, если плагин упал (например, нет прав)
                                 if event.topic != "SYS_TICK" {
-                                    eprintln!("  ![{}] ОШИБКА: {:?}", name, e);
+                                    eprintln!("  ![{}] CRITICAL ERR: {:?}", name, e);
                                 }
                             }
                         }
