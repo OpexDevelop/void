@@ -15,7 +15,6 @@ const FUEL_LIMIT: u64 = 50_000_000;
 bindgen!({
     path:  "wit/plugin.wit",
     world: "network-plugin-world",
-    async: true,
 });
 
 struct HostState {
@@ -30,22 +29,25 @@ impl WasiView for HostState {
     fn table(&mut self) -> &mut ResourceTable { &mut self.table }
 }
 
+// Без async: true — методы синхронные, но handle_event в плагине вызывается
+// через call_handle_event_async на Store с async_support(true)
 impl NetworkPluginWorldImports for HostState {
-    async fn emit_event(&mut self, topic: String, payload: Vec<u8>) -> wasmtime::Result<()> {
-        let _ = self.event_tx.send(Event {
+    fn emit_event(&mut self, topic: String, payload: Vec<u8>) -> wasmtime::Result<()> {
+        // try_send не блокирует — корректно в sync контексте
+        let _ = self.event_tx.try_send(Event {
             meta:    HostEventMeta::new(topic),
             payload,
-        }).await;
+        });
         Ok(())
     }
 
-    async fn host_http_post(&mut self, url: String, body: Vec<u8>) -> wasmtime::Result<i32> {
+    fn host_http_post(&mut self, url: String, body: Vec<u8>) -> wasmtime::Result<i32> {
         if !self.permissions.network { return Ok(-1); }
-        network::http_post(url, body).await;
+        tokio::spawn(network::http_post(url, body));
         Ok(0)
     }
 
-    async fn host_sse_start(&mut self, url: String) -> wasmtime::Result<i32> {
+    fn host_sse_start(&mut self, url: String) -> wasmtime::Result<i32> {
         if !self.permissions.network { return Ok(-1); }
         tokio::spawn(network::sse_loop(url, self.event_tx.clone()));
         Ok(0)
@@ -93,6 +95,7 @@ impl PluginRuntime for WasmtimeRuntime {
         let mut store = Store::new(&self.engine, host_state);
         store.set_fuel(FUEL_LIMIT)?;
 
+        // async instantiate — не блокирует планировщик при инициализации
         let (plugin, _) = NetworkPluginWorld::instantiate_async(
             &mut store,
             &component,
@@ -119,6 +122,8 @@ impl PluginInstance for WasmtimeInstance {
         let meta: HostEventMeta = serde_json::from_slice(meta_json)
             .map_err(|e| e.to_string())?;
 
+        // call_handle_event — async вызов wasm компонента
+        // Store имеет async_support(true) — не блокирует поток
         let result = self.plugin
             .call_handle_event(
                 &mut self.store,
