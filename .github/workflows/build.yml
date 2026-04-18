@@ -1,55 +1,55 @@
-name: Build Void Extism
+name: void
 
-# Запускаем скрипт при каждом пуше (коммите) и оставляем возможность ручного запуска
 on:
   push:
     branches: [ "main", "master" ]
   workflow_dispatch:
 
+env:
+  RUSTFLAGS: "-C link-arg=-fuse-ld=lld"
+  CARGO_INCREMENTAL: 1
+
 jobs:
   build:
-    name: Build Host & Plugin
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Скачиваем твой код из репозитория
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      # 2. Устанавливаем стабильный Rust и добавляем поддержку WebAssembly
-      - name: Install Rust toolchain
+      - name: install lld
+        run: sudo apt-get install -y lld
+
+      - name: setup rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
 
-      # 3. Кэшируем зависимости, чтобы следующие сборки летали за секунды
-      - name: Cache Cargo dependencies
-        uses: actions/cache@v4
+      - name: cache
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          shared-key: "void"
 
-      # 4. Компилируем Wasm-плагин (в режиме release для максимальной скорости)
-      - name: Build Plugin (Wasm)
-        run: cargo build -p plugin-test --target wasm32-unknown-unknown --release
+      - name: build plugin
+        run: cargo build -p plugin --target wasm32-unknown-unknown --release
 
-      # 5. Компилируем ядро/Хост (под Linux x86_64)
-      - name: Build Host
-        run: cargo build -p host --release
+      - name: build void
+        run: cargo build -p void --release
 
-      # 6. Собираем готовые файлы в одну красивую папку dist
-      - name: Prepare Artifacts
+      - name: test
+        run: |
+          mkdir -p plugins
+          cp target/wasm32-unknown-unknown/release/plugin.wasm ./plugins/
+          chmod +x ./target/release/void
+          ./target/release/void
+
+      - name: package
         run: |
           mkdir -p dist/plugins
-          cp target/release/host dist/
-          cp target/wasm32-unknown-unknown/release/plugin_test.wasm dist/plugins/
+          cp target/release/void dist/
+          cp ./plugins/plugin.wasm dist/plugins/
 
-      # 7. Загружаем папку dist как артефакт (чтобы ты мог ее скачать)
-      - name: Upload Artifact
+      - name: upload
         uses: actions/upload-artifact@v4
         with:
-          name: void-release
+          name: void
           path: dist/

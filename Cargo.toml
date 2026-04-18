@@ -1,6 +1,13 @@
 [workspace]
-members = [
-    "host",
-    "plugin-test",
-]
+members = ["core", "plugin"]
 resolver = "2"
+
+[profile.dev]
+debug = 0
+incremental = true
+
+[profile.release]
+debug = 0
+strip = true
+lto = "thin"
+codegen-units = 16

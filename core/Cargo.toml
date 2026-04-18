@@ -1,8 +1,7 @@
 [package]
-name = "host"
+name = "void"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-# Подключаем Extism для Хоста
 extism = "1.6.0"
